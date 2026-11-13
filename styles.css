@@ -1780,3 +1780,145 @@ input::placeholder,textarea::placeholder{color:#849187;opacity:1}
 #modal-root .modal.modal-rich-editor .rich-tool-media-button{
   flex:1 1 0!important;min-width:0!important;width:100%!important;max-width:none!important;
 }
+
+/* Round 9: adjustable, remembered reading width for knowledge-card detail dialogs. */
+#modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal){
+  width:min(var(--knowledge-detail-width,1080px),calc(100vw - 48px))!important;
+  height:min(88dvh,940px)!important;
+  max-height:calc(100dvh - 36px)!important;
+  grid-template-rows:max-content minmax(0,1fr) max-content!important;
+}
+#modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head{
+  display:flex!important;align-items:center!important;justify-content:space-between!important;
+  flex-wrap:wrap!important;gap:14px!important;padding:20px 24px 16px!important;
+}
+#modal-root .knowledge-detail-heading{flex:1 1 280px!important;min-width:0!important}
+#modal-root .knowledge-detail-heading h2{
+  margin:7px 0 4px!important;color:#263b2f!important;font-size:22px!important;
+  line-height:1.38!important;letter-spacing:-.35px!important;
+}
+#modal-root .knowledge-detail-heading p{margin:0!important;color:#87958a!important;font-size:11px!important}
+#modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-body{
+  min-height:0!important;padding:22px 26px 28px!important;
+}
+#modal-root .knowledge-detail-modal:not(.knowledge-editor-modal) .knowledge-detail-body{
+  width:100%!important;max-width:none!important;min-height:100%!important;
+  font-size:14px;line-height:2.05;padding:22px 24px!important;
+}
+#modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-footer{padding:12px 24px 15px!important}
+@media(max-width:900px){
+  #modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head{align-items:flex-start!important}
+}
+@media(max-width:620px){
+  #modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal){
+    width:calc(100vw - 18px)!important;height:calc(100dvh - 18px)!important;
+    max-height:calc(100dvh - 18px)!important;border-radius:16px!important;
+  }
+  #modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head{
+    min-height:0!important;padding:14px 15px 12px!important;gap:9px!important;
+  }
+  #modal-root .knowledge-detail-heading{flex:1 1 calc(100% - 42px)!important}
+  #modal-root .knowledge-detail-heading h2{font-size:18px!important}
+  #modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-body{padding:13px 13px 17px!important}
+  #modal-root .knowledge-detail-modal:not(.knowledge-editor-modal) .knowledge-detail-body{padding:15px 14px!important;font-size:13px;line-height:1.9}
+  #modal-root .knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-footer{padding:9px 13px 12px!important}
+}
+
+/* Round 12: place the reading-width control in the detail dialog's bottom action row. */
+#modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head.knowledge-detail-modal-head{
+  display:flex!important;align-items:flex-start!important;justify-content:space-between!important;
+  min-height:74px!important;padding:19px 25px 15px!important;gap:14px!important;
+}
+#modal-root .knowledge-detail-modal-head>.knowledge-detail-heading{
+  flex:1 1 auto!important;min-width:0!important;max-width:calc(100% - 48px)!important;
+}
+#modal-root .knowledge-detail-modal-head .knowledge-detail-heading h2{
+  height:auto!important;max-height:2.8em!important;margin:3px 0 4px!important;
+  line-height:1.4!important;white-space:normal!important;overflow:hidden!important;
+  display:-webkit-box!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;
+}
+#modal-root .knowledge-detail-modal-head .knowledge-detail-heading p{
+  height:auto!important;line-height:1.4!important;white-space:normal!important;
+}
+#modal-root .knowledge-detail-modal-head>.knowledge-detail-close{
+  margin:0!important;flex:0 0 34px!important;justify-self:auto!important;align-self:flex-start!important;
+}
+#modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-footer>.knowledge-detail-modal-footer{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(260px,340px) minmax(0,1fr)!important;
+  grid-template-areas:"delete width actions"!important;
+  align-items:center!important;justify-content:stretch!important;gap:12px!important;
+  min-height:68px!important;padding:10px 0!important;
+}
+#modal-root .knowledge-detail-footer-delete{grid-area:delete;justify-self:start;min-width:0}
+#modal-root .knowledge-width-footer-control{
+  grid-area:width;justify-self:center;width:100%;min-width:0;box-sizing:border-box;
+  display:grid;grid-template-columns:auto minmax(70px,1fr) 58px auto;
+  align-items:center;gap:9px;padding:8px 10px;
+  border:1px solid #e4ebe1;border-radius:12px;
+  background:linear-gradient(180deg,#fbfcfa,#f5f8f3);
+  color:#607264;font-size:10px;line-height:1.2;
+}
+#modal-root .knowledge-width-footer-control>label{white-space:nowrap;font-weight:750;color:#617566}
+#modal-root .knowledge-width-footer-control>input[type="range"]{
+  display:block;width:100%;min-width:70px;height:20px;min-height:20px;margin:0;padding:0;
+  appearance:none;-webkit-appearance:none;accent-color:#547d5d;background:transparent;
+  cursor:ew-resize;touch-action:pan-y;user-select:none;-webkit-user-select:none;
+}
+#modal-root .knowledge-width-footer-control>input[type="range"]::-webkit-slider-runnable-track{
+  height:4px;border-radius:8px;background:linear-gradient(90deg,#6f9b72 0 var(--knowledge-width-progress,50%),#dfe8dd var(--knowledge-width-progress,50%) 100%);
+}
+#modal-root .knowledge-width-footer-control>input[type="range"]::-moz-range-track{
+  height:4px;border-radius:8px;background:linear-gradient(90deg,#6f9b72 0 var(--knowledge-width-progress,50%),#dfe8dd var(--knowledge-width-progress,50%) 100%);
+}
+#modal-root .knowledge-width-footer-control>input[type="range"]::-webkit-slider-thumb{
+  appearance:none;-webkit-appearance:none;width:13px;height:13px;margin-top:-4.5px;
+  border:2px solid #547d5d;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(38,70,47,.2);
+}
+#modal-root .knowledge-width-footer-control>input[type="range"]::-moz-range-thumb{
+  width:10px;height:10px;border:2px solid #547d5d;border-radius:50%;background:#fff;
+  box-shadow:0 1px 4px rgba(38,70,47,.2);
+}
+#modal-root .knowledge-width-footer-control>input[type="range"]:focus-visible{outline:2px solid #9bbf99;outline-offset:3px;border-radius:8px}
+#modal-root .knowledge-width-footer-control>output{
+  min-width:58px;text-align:right;font-size:10px;font-weight:800;
+  color:#355941;font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+#modal-root .knowledge-width-reset-link{
+  border:0;background:transparent;padding:5px 2px;color:#66806a;
+  font-size:10px;font-weight:750;white-space:nowrap;cursor:pointer;border-radius:6px;
+}
+#modal-root .knowledge-width-reset-link:hover{background:#eaf2e8;color:#31583a}
+#modal-root .knowledge-width-reset-link:focus-visible{outline:2px solid #9bbf99;outline-offset:2px}
+#modal-root .knowledge-detail-footer-actions{grid-area:actions;justify-self:end;display:flex;align-items:center;gap:8px;min-width:0}
+#modal-root .knowledge-detail-footer-actions .btn,#modal-root .knowledge-detail-footer-delete .btn{min-height:36px}
+@media(max-width:760px){
+  #modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-footer>.knowledge-detail-modal-footer{
+    grid-template-columns:minmax(0,1fr) auto!important;
+    grid-template-areas:"width width" "delete actions"!important;
+    gap:9px 8px!important;min-height:0!important;padding:8px 0!important;
+  }
+  #modal-root .knowledge-width-footer-control{width:min(360px,100%);min-height:42px}
+  #modal-root .knowledge-detail-footer-actions{gap:6px}
+  #modal-root .knowledge-detail-footer-actions .btn,#modal-root .knowledge-detail-footer-delete .btn{min-height:34px;padding:7px 9px;font-size:10px}
+}
+@media(max-width:380px){
+  #modal-root .knowledge-width-footer-control{grid-template-columns:auto minmax(54px,1fr) 53px auto;gap:6px;padding:7px 8px}
+  #modal-root .knowledge-width-footer-control>input[type="range"]{min-width:54px}
+  #modal-root .knowledge-width-footer-control>output{min-width:53px;font-size:9px}
+  #modal-root .knowledge-detail-footer-actions .btn,#modal-root .knowledge-detail-footer-delete .btn{padding:6px 7px;font-size:9px}
+}
+@media(max-width:760px){
+  #modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head.knowledge-detail-modal-head{
+    display:grid!important;grid-template-columns:minmax(0,1fr) 32px!important;
+    align-items:start!important;column-gap:10px!important;row-gap:0!important;
+  }
+  #modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head.knowledge-detail-modal-head>.knowledge-detail-heading{
+    grid-column:1!important;grid-row:1!important;max-width:none!important;
+    min-width:0!important;width:auto!important;flex:none!important;
+  }
+  #modal-root .modal.knowledge-detail-modal:not(.knowledge-editor-modal)>.modal-head.knowledge-detail-modal-head>.knowledge-detail-close{
+    grid-column:2!important;grid-row:1!important;justify-self:end!important;
+    align-self:start!important;margin:0!important;
+  }
+}

@@ -1,0 +1,3 @@
+Embedded Learning Hub V14
+Change: Remove internal import/review process messages from the knowledge-library interface and clean existing imported-card preambles.
+Compatibility: Existing knowledge cards, localStorage data, reading-width preference, and cloud-sync schema are preserved.
