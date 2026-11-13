@@ -1,6 +1,6 @@
 # 嵌入式学习站 · Embedded Learning Station
 
-**当前版本：V17（云同步稳定性修复版）**
+**当前版本：V18（同步期间保持当前页面版）**
 
 一个无需构建步骤的中文嵌入式学习工作台，可直接部署到 GitHub Pages。网站使用原生 HTML、CSS 和 JavaScript；本地数据保存在浏览器中，可选接入 Supabase Auth 与 PostgreSQL 实现跨设备同步。
 
@@ -54,7 +54,7 @@ python -m http.server 8000
 3. 在网站「偏好与数据 → 跨设备云同步 → Supabase 连接配置」中填写 URL 和 key，保存并登录。
 4. 首次迁移本机数据或恢复云端数据时，按页面提示明确选择操作；覆盖数据前建议先导出 JSON 备份。
 
-**本精简发行包不包含 Supabase 数据库初始化 SQL、RLS 测试文件或测试目录。** 当前已初始化的 Supabase 项目不受影响；V17 不需要修改数据库表结构或 RLS 策略。若要接入全新的 Supabase 项目，需要从你自己的安全备份或既有数据库维护资料中恢复相应的表结构与 RLS 策略。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
+**本精简发行包不包含 Supabase 数据库初始化 SQL、RLS 测试文件或测试目录。** 当前已初始化的 Supabase 项目不受影响；V18 不需要修改数据库表结构或 RLS 策略。若要接入全新的 Supabase 项目，需要从你自己的安全备份或既有数据库维护资料中恢复相应的表结构与 RLS 策略。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
 
 如需让新设备自动获得连接地址，可在部署前将默认 Project URL 和公开 publishable key 填入 `sync-config.js`。若留空，则每台设备都可以在网站设置页单独配置。
 
@@ -96,8 +96,9 @@ python -m http.server 8000
 | V15 | 移除知识卡片种子文件和自动导入代码，避免在工程中保留个人知识内容副本。 |
 | V16 | 生产工程精简：移除测试脚本、数据库 SQL/测试目录、历史截图、旧版报告和冗余代码快照；统一使用本 README 记录版本历史。 |
 | V17 | 修复手机与电脑多端同步回声：远端应用写入不再触发本地上传；工作区指纹采用稳定序列化；相同内容的新 revision 只确认版本、不重复弹窗；Realtime 订阅按账号复用，避免反复重连和重复事件。 |
+| V18 | 修复接收端同步时被强制带回首页的问题；保留当前页面、学习地图中的课程/课时位置、筛选与滚动位置；有未提交表单或正在编辑时不重绘界面，避免同步刷新覆盖输入中的内容。 |
 
 ---
 
 **项目类型：** 静态 HTML/CSS/JavaScript 应用，无构建步骤。  
-**当前发行版本：** V17 · Cloud Sync Stability Fix
+**当前发行版本：** V18 · Keep Current Page During Sync
