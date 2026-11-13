@@ -126,11 +126,7 @@
   function applyRemote(row, message) {
     const a = app();
     if (!a || typeof a.applyRemoteState !== 'function') throw new Error('页面适配器未准备好。');
-    const merged = typeof a.mergeComputerKnowledgeCards === 'function' ? a.mergeComputerKnowledgeCards(row.state) : row.state;
-    a.applyRemoteState(merged);
-    // A reviewed local knowledge migration may be merged into an older cloud
-    // snapshot. Acknowledge the original remote fingerprint so the merged cards
-    // remain dirty and are uploaded as a normal next revision.
+    a.applyRemoteState(row.state);
     setLinked(row, row.state);
     if (message) toast(message);
   }
@@ -184,10 +180,8 @@
       return;
     }
     const localMatchesSynced = meta.userId === user.id && localFp === meta.fingerprint && !dirty;
-    const a = app();
-    const onlyKnowledgeMigration = !!(a && typeof a.isComputerKnowledgeImportOnlyChange === 'function' && a.isComputerKnowledgeImportOnlyChange(row.state));
-    if (localMatchesSynced || onlyKnowledgeMigration) {
-      applyRemote(row, onlyKnowledgeMigration ? '已接收云端更新。' : '已自动接收其他设备的更新。');
+    if (localMatchesSynced) {
+      applyRemote(row, '已自动接收其他设备的更新。');
     } else {
       showConflict(row);
     }
@@ -255,10 +249,8 @@
       }
       const matchesLastSynced = localFp === meta.fingerprint;
       if (row.revision > Number(meta.revision || 0)) {
-        const a = app();
-        const onlyKnowledgeMigration = !!(a && typeof a.isComputerKnowledgeImportOnlyChange === 'function' && a.isComputerKnowledgeImportOnlyChange(row.state));
-        if (matchesLastSynced || onlyKnowledgeMigration) {
-          applyRemote(row, onlyKnowledgeMigration ? '已恢复云端工作区。' : '已同步其他设备上的最新数据。');
+        if (matchesLastSynced) {
+          applyRemote(row, '已同步其他设备上的最新数据。');
         } else {
           showConflict(row, '本机与云端在上次同步后都发生了修改。为避免丢失数据，请选择保留哪个版本。');
         }
