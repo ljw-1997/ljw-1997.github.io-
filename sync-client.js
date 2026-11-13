@@ -11,6 +11,7 @@
   let user = null;
   let authSubscription = null;
   let realtimeChannel = null;
+  let realtimeUserId = '';
   let pollTimer = null;
   let pushTimer = null;
   let bootPromise = null;
@@ -22,6 +23,8 @@
   let pushInFlight = false;
   let pendingPush = false;
   let passwordRecoveryMode = false;
+  let applyingRemote = false;
+  let lastRemoteNoticeKey = '';
 
   const status = {
     configured: false,
@@ -51,8 +54,14 @@
   }
   function readMeta() { try { return JSON.parse(localGet(META_KEY) || 'null') || {}; } catch (_) { return {}; } }
   function writeMeta(meta) { localSet(META_KEY, JSON.stringify(meta)); }
+  function stableStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return '[' + value.map(item => stableStringify(item) ?? 'null').join(',') + ']';
+    const keys = Object.keys(value).filter(key => typeof value[key] !== 'undefined').sort();
+    return '{' + keys.map(key => JSON.stringify(key) + ':' + stableStringify(value[key])).join(',') + '}';
+  }
   function fingerprint(value) {
-    const input = JSON.stringify(value);
+    const input = stableStringify(value);
     let hash = 2166136261;
     for (let i = 0; i < input.length; i++) { hash ^= input.charCodeAt(i); hash = Math.imul(hash, 16777619); }
     return (hash >>> 0).toString(16).padStart(8, '0') + ':' + input.length;
@@ -86,6 +95,7 @@
   function closeRealtime() {
     if (realtimeChannel && client) client.removeChannel(realtimeChannel).catch(() => {});
     realtimeChannel = null;
+    realtimeUserId = '';
   }
   function stopClientListeners() {
     clearTimers();
@@ -126,9 +136,22 @@
   function applyRemote(row, message) {
     const a = app();
     if (!a || typeof a.applyRemoteState !== 'function') throw new Error('页面适配器未准备好。');
-    a.applyRemoteState(row.state);
-    setLinked(row, row.state);
-    if (message) toast(message);
+    const noticeKey = user.id + ':' + row.revision + ':' + fingerprint(row.state);
+    applyingRemote = true;
+    try {
+      a.applyRemoteState(row.state);
+    } finally {
+      applyingRemote = false;
+    }
+    // The application may normalise/migrate the incoming workspace before saving it.
+    // Treat that normalised local snapshot as the acknowledged remote state so that
+    // applying a remote update never immediately echoes the same data back to cloud.
+    const appliedSnapshot = getAppStateOrThrow();
+    setLinked(row, appliedSnapshot);
+    if (message && lastRemoteNoticeKey !== noticeKey) {
+      lastRemoteNoticeKey = noticeKey;
+      toast(message);
+    }
   }
   function showConflict(row, message) {
     conflictRow = row;
@@ -167,16 +190,20 @@
       if (hasNewerLocalChanges) schedulePush(150);
       return;
     }
-    // A next-revision event that exactly equals the live local state is also safe
-    // to accept (for example an identical write from another tab).
-    if (row.revision === status.revision + 1 && rowFp === localFp) {
+    // A revision can advance without changing the workspace payload (for example,
+    // duplicate/normalising writes from another client). Acknowledge any such row
+    // regardless of the revision gap, but do not re-apply it or show a toast.
+    if (rowFp === localFp) {
       status.revision = row.revision;
       status.updatedAt = row.updated_at;
       status.hasLocalChanges = false;
+      status.error = '';
       dirty = false;
+      conflictRow = null;
       lastSnapshotFingerprint = localFp;
       writeMeta({ userId: user.id, revision: row.revision, fingerprint: localFp, updatedAt: row.updated_at || new Date().toISOString() });
-      setStatus('linked', '本机变更已在云端确认。');
+      setStatus('linked', '本机数据已与云端保持一致。');
+      ensureRealtimeAndPolling();
       return;
     }
     const localMatchesSynced = meta.userId === user.id && localFp === meta.fingerprint && !dirty;
@@ -188,14 +215,23 @@
   }
   function ensureRealtimeAndPolling() {
     if (!client || !user || status.mode !== 'linked') return;
-    closeRealtime();
-    try {
-      realtimeChannel = client.channel('workspace-sync-' + user.id)
-        .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: 'user_id=eq.' + user.id }, payload => {
-          if (payload && payload.new) handleRemoteRow(payload.new).catch(err => setStatus('error', '接收云端更新失败。', err));
-        }).subscribe();
-    } catch (err) { console.warn('[EmbeddedSync] Realtime unavailable; polling remains enabled.', err); }
-    if (pollTimer) clearInterval(pollTimer);
+    // Keep one subscription per signed-in user. Recreating the channel on every
+    // acknowledgement can cause reconnect churn and duplicate change deliveries.
+    if (!realtimeChannel || realtimeUserId !== user.id) {
+      closeRealtime();
+      try {
+        realtimeChannel = client.channel('workspace-sync-' + user.id)
+          .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: 'user_id=eq.' + user.id }, payload => {
+            if (payload && payload.new) handleRemoteRow(payload.new).catch(err => setStatus('error', '接收云端更新失败。', err));
+          }).subscribe();
+        realtimeUserId = user.id;
+      } catch (err) {
+        realtimeChannel = null;
+        realtimeUserId = '';
+        console.warn('[EmbeddedSync] Realtime unavailable; polling remains enabled.', err);
+      }
+    }
+    if (pollTimer) return;
     pollTimer = setInterval(async () => {
       if (!client || !user || status.mode !== 'linked') return;
       try {
@@ -532,6 +568,9 @@
     if (status.mode === 'linked') toast('云端检查完成，当前已是最新版本。');
   }
   function onLocalSave() {
+    // Remote state application can trigger app-level persistence hooks in future
+    // builds. Never classify that write as a new local edit or echo it to cloud.
+    if (applyingRemote) return;
     if (!user) return;
     if (status.mode !== 'linked') return;
     dirty = true;
