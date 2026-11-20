@@ -1,0 +1,9 @@
+{
+  "id": "embedded-learning-bridge",
+  "name": "Embedded Learning Bridge",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Two-way Markdown sync for Embedded Learning Station using Supabase.",
+  "author": "Embedded Learning Station",
+  "isDesktopOnly": false
+}
