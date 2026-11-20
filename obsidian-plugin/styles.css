@@ -1,1 +1,59 @@
 /* Embedded Learning Hub Sync: deliberately relies on Obsidian theme variables. */
+.elh-duplicate-modal {
+  width: min(900px, 92vw);
+  max-width: 92vw;
+  max-height: 82vh;
+  overflow: auto;
+}
+.elh-duplicate-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 1rem;
+  margin: 1rem 0;
+}
+.elh-duplicate-card h3 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+.elh-duplicate-identical { color: var(--text-success); }
+.elh-duplicate-different { color: var(--text-warning); }
+.elh-duplicate-select {
+  display: block;
+  width: 100%;
+  margin: 0.4rem 0 0.8rem;
+}
+.elh-duplicate-file-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.8rem 0;
+}
+.elh-duplicate-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 0.35rem 0;
+}
+.elh-duplicate-file-row code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.elh-duplicate-previews pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.elh-duplicate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+.elh-duplicate-empty {
+  padding: 1rem;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}

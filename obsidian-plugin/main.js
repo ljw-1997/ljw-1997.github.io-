@@ -3,10 +3,12 @@ const Plugin = obsidian.Plugin;
 const Notice = obsidian.Notice;
 const PluginSettingTab = obsidian.PluginSettingTab;
 const FuzzySuggestModal = obsidian.FuzzySuggestModal;
+const Modal = obsidian.Modal;
 const Setting = obsidian.Setting;
 const requestUrl = obsidian.requestUrl;
 const normalizePath = obsidian.normalizePath;
 const TFile = obsidian.TFile;
+const TFolder = obsidian.TFolder;
 
 const PLUGIN_ID = 'embedded-learning-hub-sync';
 const TABLE = 'embedded_learning_workspaces';
@@ -230,9 +232,16 @@ function markdownToHtml(markdown) {
   flushParagraph(); flushList();
   return output.join('');
 }
-function safeSlug(value) {
+function legacySafeSlug(value) {
   const slug = String(value || '未命名').normalize('NFKC').replace(/[\\/:*?"<>|]/g, '-').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 72);
   return slug || '未命名';
+}
+function safeSlug(value) {
+  const slug = legacySafeSlug(value);
+  // Obsidian hides dot-prefixed files/folders by default and its Vault API
+  // does not reliably expose those paths. Keep the original title in YAML,
+  // but make the on-disk Markdown path visible and indexable.
+  return slug.startsWith('.') ? '笔记-' + slug : slug;
 }
 function itemKey(type, id) { return String(type) + ':' + String(id); }
 function normalizedHttpUrl(value) {
@@ -303,12 +312,24 @@ function itemToMarkdown(item) {
   if (originalHtml) lines.push('', '<!-- ELH_ORIGINAL_HTML_BASE64:' + encodeBase64Unicode(originalHtml) + ' -->');
   return lines.join('\n').trimEnd() + '\n';
 }
-function itemFilePath(root, item) {
+function itemFilePathWithSlug(root, item, slugger) {
   const typeFolder = { knowledge: '知识库', record: '学习记录', resource: '资源', course: '课程笔记', lesson: '课程笔记' }[item.type] || '其他';
   const suffix = String(item.id || 'new').replace(/[^A-Za-z0-9_-]/g, '').slice(-10) || 'new';
-  if (item.type === 'lesson') { const courseSuffix = String(item.courseId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(-10) || 'course'; return normalizePath(root + '/' + typeFolder + '/' + safeSlug(item.courseTitle || item.courseId || '未分类课程') + '--' + courseSuffix + '/' + safeSlug(item.title) + '--' + suffix + '.md'); }
-  if (item.type === 'course') return normalizePath(root + '/' + typeFolder + '/' + safeSlug(item.title) + '--' + suffix + '/课程.md');
-  return normalizePath(root + '/' + typeFolder + '/' + safeSlug(item.title) + '--' + suffix + '.md');
+  if (item.type === 'lesson') { const courseSuffix = String(item.courseId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(-10) || 'course'; return normalizePath(root + '/' + typeFolder + '/' + slugger(item.courseTitle || item.courseId || '未分类课程') + '--' + courseSuffix + '/' + slugger(item.title) + '--' + suffix + '.md'); }
+  if (item.type === 'course') return normalizePath(root + '/' + typeFolder + '/' + slugger(item.title) + '--' + suffix + '/课程.md');
+  return normalizePath(root + '/' + typeFolder + '/' + slugger(item.title) + '--' + suffix + '.md');
+}
+function itemFilePath(root, item) { return itemFilePathWithSlug(root, item, safeSlug); }
+function legacyItemFilePath(root, item) { return itemFilePathWithSlug(root, item, legacySafeSlug); }
+function ensureVisibleMarkdownPath(path) {
+  const normalized = normalizePath(path);
+  const slash = normalized.lastIndexOf('/');
+  const parent = slash >= 0 ? normalized.slice(0, slash) : '';
+  const filename = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+  // A leading dot makes a note invisible to Obsidian by default. Prefix only
+  // the filename; frontmatter title and note body remain unchanged.
+  const visibleFilename = filename.startsWith('.') ? '笔记-' + filename : filename;
+  return normalizePath((parent ? parent + '/' : '') + visibleFilename);
 }
 function workspaceToItems(state) {
   const items = new Map();
@@ -316,7 +337,7 @@ function workspaceToItems(state) {
   for (const record of state.records || []) if (record && record.id) items.set(itemKey('record', record.id), itemFromWorkspace('record', record));
   for (const resource of state.resources || []) if (resource && resource.id) items.set(itemKey('resource', resource.id), itemFromWorkspace('resource', resource));
   const courses = state.obsidianCatalog && Array.isArray(state.obsidianCatalog.courses) ? state.obsidianCatalog.courses : null;
-  if (!courses) throw new Error('云端工作区尚未包含 Obsidian 课程索引。请先将学习网站更新到 V19，登录并等待一次云同步完成，再连接 Obsidian。');
+  if (!courses) throw new Error('云端工作区尚未包含 Obsidian 课程索引。请先将学习网站部署到 V19 或更高版本，登录并等待一次云同步完成，再连接 Obsidian。');
   for (const course of courses) {
     if (!course || !course.id) continue;
     const courseItem = { type: 'course', ...clone(course) };
@@ -455,6 +476,7 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
     this.statusItem.setText('ELH · 未连接');
     this.addRibbonIcon('refresh-cw', '同步嵌入式学习站', () => this.syncNow(true));
     this.addCommand({ id: 'sync-now', name: '现在同步学习网站与 Obsidian', callback: () => this.syncNow(true) });
+    this.addCommand({ id: 'diagnose-duplicate-sync-ids', name: '检查和整理重复同步 ID', callback: () => this.openDuplicateDiagnostics() });
     this.addCommand({ id: 'new-knowledge-note', name: '新建同步知识卡片', callback: () => this.createTemplateNote('knowledge') });
     this.addCommand({ id: 'new-learning-record', name: '新建同步学习记录', callback: () => this.createTemplateNote('record') });
     this.addCommand({ id: 'new-resource-note', name: '新建同步资源收藏', callback: () => this.createTemplateNote('resource') });
@@ -627,7 +649,9 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
         if (['knowledge', 'record', 'resource', 'course'].includes(item.type) || (item.type === 'lesson' && item.courseId)) {
           item.id = makeId(item.type);
           raw = itemToMarkdown(item);
-          await this.writeMarkdown(file.path, raw);
+          // This is the exact source file currently being read. It is safe to
+          // update it even though its old frontmatter did not yet contain elh_id.
+          await this.writeMarkdown(file.path, raw, { allowExisting: true });
         } else continue;
       }
       if (item.type === 'resource' && !item.url) continue; // An empty resource template is a draft, not a sync failure.
@@ -640,23 +664,259 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
     return { items, rawByKey, duplicates };
   }
 
-  async ensureFolder(path) {
-    const normalized = normalizePath(path);
-    const parts = normalized.split('/');
-    let current = '';
-    for (const part of parts) {
-      current = current ? current + '/' + part : part;
-      if (!this.app.vault.getAbstractFileByPath(current)) await this.app.vault.createFolder(current);
+  async scanDuplicateSyncIds() {
+    const root = normalizeRoot(this.settings.rootFolder);
+    const files = this.app.vault.getMarkdownFiles().filter(file => file.path.startsWith(root + '/'));
+    const grouped = new Map();
+    for (const file of files) {
+      const raw = await this.app.vault.cachedRead(file);
+      const parsed = parseFrontmatter(raw);
+      if (!parsed.hasFrontmatter) continue;
+      const type = String(parsed.frontmatter.elh_type || '').toLowerCase();
+      const id = String(parsed.frontmatter.elh_id || '').trim();
+      if (!['knowledge', 'record', 'resource', 'course', 'lesson'].includes(type) || !id || !this.getTypeEnabled(type)) continue;
+      // Match readLocalItems(): an empty resource template is a draft and does not
+      // participate in synchronization or duplicate-ID blocking.
+      if (type === 'resource' && !String(parsed.frontmatter.url || '').trim()) continue;
+      const key = itemKey(type, id);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push({
+        file,
+        path: file.path,
+        raw,
+        hash: hash(raw),
+        title: String(parsed.frontmatter.title || file.basename || file.name || file.path),
+        type,
+        id
+      });
+    }
+    return Array.from(grouped.entries())
+      .filter(([, entries]) => entries.length > 1)
+      .map(([key, entries]) => {
+        entries.sort((a, b) => a.path.localeCompare(b.path));
+        return {
+          key,
+          files: entries,
+          identical: entries.every(entry => entry.raw === entries[0].raw),
+          uniqueHashes: new Set(entries.map(entry => entry.hash)).size
+        };
+      })
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }
+
+  async openDuplicateDiagnostics() {
+    try {
+      const groups = await this.scanDuplicateSyncIds();
+      if (!groups.length) {
+        new Notice('没有发现重复的同步 ID。');
+        return;
+      }
+      new DuplicateSyncIdModal(this.app, this, groups).open();
+    } catch (error) {
+      new Notice('扫描重复同步 ID 失败：' + (error.message || error));
     }
   }
 
-  async writeMarkdown(path, markdown) {
-    await this.ensureFolder(path.split('/').slice(0, -1).join('/'));
-    const existing = this.app.vault.getAbstractFileByPath(path);
+  async archiveDuplicateGroup(key, keepPath) {
+    const root = normalizeRoot(this.settings.rootFolder);
+    const group = (await this.scanDuplicateSyncIds()).find(entry => entry.key === key);
+    if (!group || group.files.length < 2) throw new Error('该重复 ID 已不存在或已被其他操作整理，请重新扫描。');
+    if (!group.files.some(entry => entry.path === keepPath)) throw new Error('选择保留的笔记已不在当前重复组中，请重新扫描。');
+
+    const rootParts = root.split('/');
+    const rootName = rootParts.pop();
+    const rootParent = rootParts.join('/');
+    const backupRootName = rootName + ' - 重复ID备份';
+    let backupRootRequested = normalizePath((rootParent ? rootParent + '/' : '') + backupRootName);
+    // ensureFolder intentionally treats a file at the first path segment as a
+    // hard error (the normal sync-root safety rule). For this auxiliary backup
+    // directory, choose a free sibling name rather than failing or touching it.
+    for (let suffix = 1; this.app.vault.getAbstractFileByPath(backupRootRequested) instanceof TFile; suffix++) {
+      backupRootRequested = normalizePath((rootParent ? rootParent + '/' : '') + backupRootName + '-' + suffix);
+      if (suffix > 100) throw new Error('无法找到安全的重复笔记备份目录，请先为备份目录名称腾出空间。');
+    }
+    const backupRoot = await this.ensureFolder(backupRootRequested);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const batchFolder = await this.ensureFolder(backupRoot + '/' + stamp + '-' + makeId('copy').slice(-8));
+    const toMove = group.files.filter(entry => entry.path !== keepPath);
+    const moved = [];
+
     this.applying = true;
     try {
-      if (existing instanceof TFile) await this.app.vault.modify(existing, markdown);
-      else await this.app.vault.create(path, markdown);
+      for (const entry of toMove) {
+        // Re-validate identity immediately before moving. Never archive a file that
+        // has been edited/replaced since the diagnostic view was opened.
+        const current = this.app.vault.getAbstractFileByPath(entry.path);
+        if (!(current instanceof TFile)) throw new Error('待备份文件已不存在或不再是 Markdown 文件：' + entry.path + '。请重新扫描。');
+        const currentRaw = await this.app.vault.cachedRead(current);
+        const parsed = parseFrontmatter(currentRaw);
+        const currentKey = itemKey(String(parsed.frontmatter.elh_type || '').toLowerCase(), String(parsed.frontmatter.elh_id || '').trim());
+        if (currentKey !== key) throw new Error('文件同步身份在整理前发生变化，已停止操作：' + entry.path);
+
+        const relative = entry.path.slice(root.length + 1);
+        const relativeParts = relative.split('/');
+        const filename = relativeParts.pop();
+        const relativeParent = relativeParts.join('/');
+        const destinationParent = relativeParent
+          ? await this.ensureFolder(batchFolder + '/' + relativeParent)
+          : batchFolder;
+        const ext = filename.toLowerCase().endsWith('.md') ? '.md' : '';
+        const stem = ext ? filename.slice(0, -3) : filename;
+        let destination = normalizePath(destinationParent + '/' + filename);
+        for (let suffix = 1; this.app.vault.getAbstractFileByPath(destination); suffix++) {
+          destination = normalizePath(destinationParent + '/' + stem + '--备份-' + suffix + ext);
+          if (suffix > 100) throw new Error('备份目录中出现过多同名文件，已停止移动：' + entry.path);
+        }
+
+        if (this.app.fileManager && typeof this.app.fileManager.renameFile === 'function') {
+          await this.app.fileManager.renameFile(current, destination);
+        } else if (this.app.vault && typeof this.app.vault.rename === 'function') {
+          await this.app.vault.rename(current, destination);
+        } else {
+          throw new Error('当前 Obsidian 环境不支持安全移动文件，未删除任何笔记。');
+        }
+        moved.push({ from: entry.path, to: destination });
+      }
+
+      // The manifest stores a content baseline and path hint. Update the hint to
+      // the canonical file selected by the user; the content hash remains intact.
+      const manifestItem = this.settings.manifest?.items?.[key];
+      if (manifestItem) manifestItem.path = keepPath;
+      await this.saveSettings();
+      return { key, kept: keepPath, moved, backupFolder: batchFolder };
+    } finally {
+      this.applying = false;
+    }
+  }
+
+  async ensureFolder(path) {
+    const normalized = normalizePath(path);
+    if (!normalized) return '';
+    const parts = normalized.split('/').filter(Boolean);
+    let current = '';
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      let candidate = current ? current + '/' + part : part;
+      let existing = this.app.vault.getAbstractFileByPath(candidate);
+      if (existing instanceof TFolder) {
+        current = candidate;
+        continue;
+      }
+      if (existing instanceof TFile) {
+        // A user file occupies a directory name expected by the plugin. Never
+        // delete or replace it; use a deterministic sibling directory instead.
+        if (index === 0) throw new Error('同步根目录与现有文件冲突：' + candidate + '。请将这个同名文件改名，或在插件设置中更换同步根目录。');
+        const base = part + '--ELH';
+        let resolved = '';
+        for (let n = 1; n <= 50; n++) {
+          const folderName = n === 1 ? base : base + '-' + n;
+          const alternate = (current ? current + '/' : '') + folderName;
+          const found = this.app.vault.getAbstractFileByPath(alternate);
+          if (found instanceof TFolder) { resolved = alternate; break; }
+          if (found) continue;
+          try {
+            await this.app.vault.createFolder(alternate);
+            resolved = alternate;
+            break;
+          } catch (error) {
+            const after = this.app.vault.getAbstractFileByPath(alternate);
+            if (after instanceof TFolder) { resolved = alternate; break; }
+            if (!after && !/already exists|已存在/i.test(String(error?.message || error))) throw error;
+          }
+        }
+        if (!resolved) throw new Error('无法为同步目录创建安全的备用文件夹：' + candidate);
+        current = resolved;
+        continue;
+      }
+      try {
+        await this.app.vault.createFolder(candidate);
+        current = candidate;
+      } catch (error) {
+        const after = this.app.vault.getAbstractFileByPath(candidate);
+        if (after instanceof TFolder) { current = candidate; continue; }
+        if (after instanceof TFile) {
+          if (index === 0) throw new Error('同步根目录与现有文件冲突：' + candidate + '。请将这个同名文件改名，或在插件设置中更换同步根目录。');
+          const alternate = await this.ensureFolder((current ? current + '/' : '') + part + '--ELH');
+          current = alternate;
+          continue;
+        }
+        throw new Error('创建同步目录失败（' + candidate + '）：' + (error.message || error));
+      }
+    }
+    return current;
+  }
+
+  async fileMatchesItem(file, item) {
+    if (!(file instanceof TFile) || !item || !item.type || !item.id) return false;
+    try {
+      const parsed = parseFrontmatter(await this.app.vault.cachedRead(file));
+      return String(parsed.frontmatter.elh_type || '') === String(item.type)
+        && String(parsed.frontmatter.elh_id || '') === String(item.id);
+    } catch (_) { return false; }
+  }
+
+  collisionFilePath(path, item, markdown, attempt) {
+    const normalized = normalizePath(path);
+    const slash = normalized.lastIndexOf('/');
+    const parent = slash >= 0 ? normalized.slice(0, slash) : '';
+    const filename = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+    const dot = filename.toLowerCase().endsWith('.md') ? filename.slice(0, -3) : filename;
+    const suffixSource = item && item.type && item.id ? item.type + ':' + item.id : String(markdown || 'ELH');
+    const identity = hash(suffixSource).split(':')[0].slice(0, 8);
+    const suffix = '--elh-' + identity + (attempt > 1 ? '-' + attempt : '');
+    return normalizePath((parent ? parent + '/' : '') + dot + suffix + '.md');
+  }
+
+  async writeMarkdown(path, markdown, options = {}) {
+    const requestedPath = normalizePath(path);
+    const originalPath = ensureVisibleMarkdownPath(requestedPath);
+    const parentPath = originalPath.split('/').slice(0, -1).join('/');
+    const actualParent = await this.ensureFolder(parentPath);
+    const filename = originalPath.split('/').pop();
+    const preferredPath = normalizePath((actualParent ? actualParent + '/' : '') + filename);
+    const item = options.item || null;
+    let candidate = preferredPath;
+    this.applying = true;
+    try {
+      for (let attempt = 0; attempt <= 50; attempt++) {
+        const existing = this.app.vault.getAbstractFileByPath(candidate);
+        if (existing instanceof TFile) {
+          const sameItem = options.allowExisting || await this.fileMatchesItem(existing, item);
+          if (sameItem) {
+            try {
+              await this.app.vault.modify(existing, markdown);
+              return existing;
+            } catch (error) {
+              throw new Error('更新笔记失败（' + candidate + '）：' + (error.message || error));
+            }
+          }
+          // The path belongs to another item or an unrelated user file. Move
+          // this write to a stable ID-suffixed path rather than overwriting it.
+          candidate = this.collisionFilePath(preferredPath, item, markdown, Math.max(1, attempt + 1));
+          continue;
+        }
+        if (existing instanceof TFolder) {
+          candidate = this.collisionFilePath(preferredPath, item, markdown, Math.max(1, attempt + 1));
+          continue;
+        }
+        try {
+          return await this.app.vault.create(candidate, markdown);
+        } catch (error) {
+          // Obsidian may report an existing file if the adapter cache changed
+          // between the existence check and create(). Re-check before retrying.
+          const after = this.app.vault.getAbstractFileByPath(candidate);
+          if (after instanceof TFile && (options.allowExisting || await this.fileMatchesItem(after, item))) {
+            await this.app.vault.modify(after, markdown);
+            return after;
+          }
+          if (after || /already exists|已存在/i.test(String(error?.message || error))) {
+            candidate = this.collisionFilePath(preferredPath, item, markdown, Math.max(1, attempt + 1));
+            continue;
+          }
+          throw new Error('创建笔记失败（' + candidate + '）：' + (error.message || error));
+        }
+      }
+      throw new Error('目标路径存在多个文件/文件夹冲突，已停止写入以避免覆盖数据。原路径：' + preferredPath);
     } finally { this.applying = false; }
   }
 
@@ -667,9 +927,10 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
     finally { this.applying = false; }
   }
 
-  async createConflictNote(key, localRaw, remoteRaw, revision) {
+  async createConflictNote(key, localRaw, remoteRaw, revision, variant = '') {
     const [type, id] = key.split(':');
-    const path = normalizePath(this.settings.rootFolder + '/_同步冲突/' + safeSlug(type + '-' + id) + '--r' + revision + '.md');
+    const variantSuffix = variant ? '--' + safeSlug(variant) : '';
+    const path = normalizePath(this.settings.rootFolder + '/_同步冲突/' + safeSlug(type + '-' + id) + variantSuffix + '--r' + revision + '.md');
     if (this.app.vault.getAbstractFileByPath(path)) return;
     const localBlock = localRaw === null ? '（本机文件已删除）' : '````markdown\n' + localRaw + '\n````';
     const remoteBlock = remoteRaw === null ? '（云端项目已删除）' : '````markdown\n' + remoteRaw + '\n````';
@@ -680,6 +941,113 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
       '## 本机版本', '', localBlock, '', '## 云端版本', '', remoteBlock, ''
     ].join('\n');
     await this.writeMarkdown(path, content);
+  }
+
+  async archiveLegacyDotFile(sourcePath, item) {
+    const adapter = this.app.vault.adapter;
+    if (!adapter || typeof adapter.rename !== 'function' || typeof adapter.mkdir !== 'function' || typeof adapter.exists !== 'function') {
+      throw new Error('当前 Obsidian 文件适配器不支持安全归档旧隐藏文件。原文件已保留，未删除。');
+    }
+    const root = normalizeRoot(this.settings.rootFolder);
+    const parts = root.split('/');
+    const rootName = parts.pop() || 'Embedded Learning Hub';
+    const rootParent = parts.join('/');
+    const backupBase = normalizePath((rootParent ? rootParent + '/' : '') + rootName + ' - 点号文件备份');
+
+    let backupRoot = backupBase;
+    for (let suffix = 1; await adapter.exists(backupRoot); suffix++) {
+      backupRoot = backupBase + '-' + suffix;
+      if (suffix > 50) throw new Error('无法为旧版隐藏笔记创建安全备份目录：' + backupBase);
+    }
+    await adapter.mkdir(backupRoot);
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const batchFolder = normalizePath(backupRoot + '/' + stamp + '-' + makeId('hidden').slice(-8));
+    await adapter.mkdir(batchFolder);
+
+    const suffix = String(item.id || 'item').replace(/[^A-Za-z0-9_-]/g, '').slice(-12) || 'item';
+    const filename = '隐藏笔记-' + safeSlug(item.title || item.id) + '--' + suffix + '.md';
+    const dot = filename.toLowerCase().endsWith('.md') ? filename.slice(0, -3) : filename;
+    let destination = normalizePath(batchFolder + '/' + filename);
+    for (let attempt = 1; await adapter.exists(destination); attempt++) {
+      destination = normalizePath(batchFolder + '/' + dot + '-' + attempt + '.md');
+      if (attempt > 100) throw new Error('备份目录中出现过多同名隐藏笔记：' + sourcePath);
+    }
+    await adapter.rename(sourcePath, destination);
+    return destination;
+  }
+
+  async migrateLegacyDotFiles(cloudItems, revision, localItems = new Map()) {
+    const adapter = this.app.vault.adapter;
+    if (!adapter || typeof adapter.exists !== 'function' || typeof adapter.read !== 'function') return [];
+    const results = [];
+    for (const item of cloudItems.values()) {
+      if (!item || !item.type || !item.id) continue;
+      const legacyPath = legacyItemFilePath(this.settings.rootFolder, item);
+      const visiblePath = itemFilePath(this.settings.rootFolder, item);
+      const rootPrefix = normalizeRoot(this.settings.rootFolder) + '/';
+      const legacyRelative = legacyPath.startsWith(rootPrefix) ? legacyPath.slice(rootPrefix.length) : legacyPath;
+      const hasHiddenSegment = legacyRelative.split('/').some(segment => segment.startsWith('.'));
+      if (legacyPath === visiblePath || !hasHiddenSegment) continue;
+
+      let legacyExists = false;
+      try { legacyExists = await adapter.exists(legacyPath); } catch (_) { legacyExists = false; }
+      if (!legacyExists) continue;
+
+      // The Vault API intentionally filters hidden dot-prefixed paths on some
+      // platforms. DataAdapter is used only for this legacy-path migration.
+      let legacyRaw;
+      try { legacyRaw = await adapter.read(legacyPath); }
+      catch (error) { throw new Error('检测到旧版点号隐藏笔记，但无法读取：' + legacyPath + '。请勿删除该文件；原始错误：' + (error.message || error)); }
+      const parsed = parseFrontmatter(legacyRaw);
+      const legacyType = String(parsed.frontmatter.elh_type || '').toLowerCase();
+      const legacyId = String(parsed.frontmatter.elh_id || '').trim();
+      if (legacyType !== item.type || legacyId !== String(item.id)) {
+        // Same path but not the same ELH item: do not move or overwrite it.
+        results.push({ path: legacyPath, status: 'unrelated' });
+        continue;
+      }
+
+      this.applying = true;
+      try {
+        const key = itemKey(item.type, item.id);
+        const localEntry = localItems && localItems.get(key);
+        const current = localEntry?.file || this.app.vault.getAbstractFileByPath(visiblePath);
+        if (current instanceof TFile && await this.fileMatchesItem(current, item)) {
+          const currentRaw = localEntry?.raw ?? await this.app.vault.cachedRead(current);
+          if (currentRaw !== legacyRaw) {
+            await this.createConflictNote(key, legacyRaw, currentRaw, revision, '点号隐藏文件迁移');
+          }
+        } else if (!current) {
+          const parentPath = visiblePath.split('/').slice(0, -1).join('/');
+          await this.ensureFolder(parentPath);
+          try {
+            await this.app.vault.create(visiblePath, legacyRaw);
+          } catch (error) {
+            // A visible destination may have appeared between check and create.
+            // Route through the normal identity-safe writer, which never replaces
+            // an unrelated file or folder.
+            await this.writeMarkdown(visiblePath, legacyRaw, { item });
+          }
+        } else {
+          await this.writeMarkdown(visiblePath, legacyRaw, { item });
+        }
+
+        let backupPath = '';
+        let status = 'migrated';
+        try { backupPath = await this.archiveLegacyDotFile(legacyPath, item); }
+        catch (error) {
+          status = 'restored-unarchived';
+          // A visible, indexed copy now exists. Keep the hidden original intact if
+          // archiving is unavailable, and tell the user where to review it.
+          new Notice('已恢复旧版隐藏笔记，但原隐藏文件暂未能移动到备份目录：' + legacyPath + '。原文件仍保留，原因：' + (error.message || error));
+        }
+        results.push({ path: legacyPath, visiblePath, backupPath, status });
+      } finally {
+        this.applying = false;
+      }
+    }
+    return results;
   }
 
   async syncNow(showNotice = true) {
@@ -697,8 +1065,23 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
     this.syncing = true;
     this.setStatus('同步中…');
     try {
+      const notifyDuplicateIds = async localSnapshot => {
+        if (!localSnapshot.duplicates.length) return false;
+        const groups = await this.scanDuplicateSyncIds();
+        this.setStatus('发现重复 ID');
+        if (showNotice && groups.length) new DuplicateSyncIdModal(this.app, this, groups).open();
+        if (showNotice) new Notice('发现 ' + groups.length + ' 组重复同步 ID，已打开诊断面板。请检查文件路径并选择要保留的笔记；其他副本会移动到同步目录之外的备份文件夹，不会被删除。');
+        return true;
+      };
+      const localBeforeMigration = await this.readLocalItems();
+      if (await notifyDuplicateIds(localBeforeMigration)) return;
+      // Preflight the cloud snapshot once so old dot-prefixed notes (hidden from
+      // the Vault API) can be restored into visible paths before local comparison.
+      const preflightRow = await this.fetchWorkspace();
+      const preflightCloud = workspaceToItems(preflightRow.state || {});
+      const legacyDotMigrations = await this.migrateLegacyDotFiles(preflightCloud, preflightRow.revision, localBeforeMigration.items);
       const local = await this.readLocalItems();
-      if (local.duplicates.length) throw new Error('发现重复的同步 ID：' + local.duplicates.map(x => x.key).join('、') + '。请先整理重复笔记。');
+      if (await notifyDuplicateIds(local)) return;
       const previousRootFolder = this.settings.manifest.rootFolder || '';
       const rootFolderChanged = !!previousRootFolder && previousRootFolder !== this.settings.rootFolder;
       let finalRow = null;
@@ -773,7 +1156,7 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
           if (!updated) continue;
           finalRow = updated;
         } else finalRow = row;
-        operations = { local, fileWrites, fileDeletes, conflicts, cloudUpdates, cloudDeletes };
+        operations = { local, fileWrites, fileDeletes, conflicts, cloudUpdates, cloudDeletes, legacyDotMigrations };
         break;
       }
       if (!finalRow || !operations) throw new Error('云端数据在同步期间连续发生变化，已停止本轮写入以避免覆盖。请再次执行同步。');
@@ -793,14 +1176,14 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
       for (const write of operations.fileWrites) {
         const item = finalCloud.get(write.key) || write.item;
         const markdown = itemToMarkdown(item);
-        await this.writeMarkdown(write.path, markdown);
+        await this.writeMarkdown(write.path, markdown, { item });
       }
       // Ensure all remote-only items have a local Markdown file, including first sync.
       const currentAfterWrites = await this.readLocalItems();
       for (const [key, item] of finalCloud.entries()) {
         if (!this.getTypeEnabled(item.type) || currentAfterWrites.items.has(key)) continue;
         const path = itemFilePath(this.settings.rootFolder, item);
-        await this.writeMarkdown(path, itemToMarkdown(item));
+        await this.writeMarkdown(path, itemToMarkdown(item), { item });
       }
       // New local items now have IDs and canonical metadata written back to their source files.
       const localAfter = await this.readLocalItems();
@@ -815,7 +1198,7 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
         nextManifest[key] = { type: item.type, id: item.id, path: localEntry.file.path, fileHash: hash(markdown), revision: finalRow.revision };
         // If canonical metadata differs after a local edit (for example updated_at),
         // rewrite in-place so the next comparison starts from an exact shared baseline.
-        if (hash(localEntry.raw) !== hash(markdown)) await this.writeMarkdown(localEntry.file.path, markdown);
+        if (hash(localEntry.raw) !== hash(markdown)) await this.writeMarkdown(localEntry.file.path, markdown, { item });
       }
       this.settings.manifest = { items: nextManifest, rootFolder: this.settings.rootFolder, lastRevision: finalRow.revision, lastSyncedAt: new Date().toISOString() };
       await this.saveSettings();
@@ -823,9 +1206,14 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
       const conflictCount = operations.conflicts.length;
       this.setStatus(conflictCount ? '有 ' + conflictCount + ' 项待合并' : '已同步 · r' + finalRow.revision);
       if (showNotice || changedCount || conflictCount) {
-        new Notice(conflictCount
+        const migrationResults = operations.legacyDotMigrations || [];
+        const migratedCount = migrationResults.filter(x => x.status === 'migrated').length;
+        const unarchivedCount = migrationResults.filter(x => x.status === 'restored-unarchived').length;
+        const migrationSuffix = (migratedCount ? ' 另外已恢复 ' + migratedCount + ' 篇旧版点号隐藏笔记，原文件已移至「点号文件备份」目录。' : '')
+          + (unarchivedCount ? ' 另有 ' + unarchivedCount + ' 篇隐藏原文件未能归档，仍保留在原位置，请检查前面的提示。' : '');
+        new Notice((conflictCount
           ? '同步完成，但有 ' + conflictCount + ' 项发生双端冲突。已生成冲突副本，请检查「_同步冲突」文件夹。'
-          : '学习网站与 Obsidian 已同步。');
+          : '学习网站与 Obsidian 已同步。') + migrationSuffix);
       }
     } catch (error) {
       this.setStatus('同步失败');
@@ -867,12 +1255,117 @@ class EmbeddedLearningHubSyncPlugin extends Plugin {
     fields.push('---', '', '# ' + names[type], '');
     const markdown = fields.join('\n');
     const path = itemFilePath(this.settings.rootFolder, { type, id, title: names[type], courseId: course?.id || '', courseTitle: course?.title || '' });
-    await this.ensureFolder(path.split('/').slice(0, -1).join('/'));
-    const file = await this.app.vault.create(path, markdown);
+    const file = await this.writeMarkdown(path, markdown, { item: { type, id } });
     await this.app.workspace.getLeaf(false).openFile(file);
     new Notice('已新建同步笔记。填写必要字段后会自动同步到学习网站。');
   }
 
+}
+
+class ConfirmDuplicateArchiveModal extends Modal {
+  constructor(app, plugin, group, keepPath, onArchived) {
+    super(app);
+    this.plugin = plugin;
+    this.group = group;
+    this.keepPath = keepPath;
+    this.onArchived = onArchived;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl('h3', { text: '确认整理重复同步 ID' });
+    const different = !this.group.identical;
+    contentEl.createEl('p', { text: different
+      ? '这组笔记内容存在差异。将保留你选定的活动笔记，其余文件会原样移动到同步根目录之外的备份文件夹。不会合并、覆盖或删除内容。'
+      : '这组笔记内容完全一致。将保留你选定的一份，其余文件会原样移动到同步根目录之外的备份文件夹。不会删除内容。' });
+    contentEl.createEl('p', { text: '保留：' + this.keepPath });
+    const actions = contentEl.createDiv({ cls: 'elh-duplicate-actions' });
+    const cancel = actions.createEl('button', { text: '取消' });
+    cancel.addEventListener('click', () => this.close());
+    const confirm = actions.createEl('button', { text: '确认移动到备份', cls: 'mod-warning' });
+    confirm.addEventListener('click', async () => {
+      confirm.disabled = true;
+      try {
+        const result = await this.plugin.archiveDuplicateGroup(this.group.key, this.keepPath);
+        this.close();
+        new Notice('已整理「' + result.key + '」：保留 1 篇，备份 ' + result.moved.length + ' 篇。备份位置：' + result.backupFolder);
+        await this.onArchived();
+      } catch (error) {
+        confirm.disabled = false;
+        new Notice('整理重复笔记失败：' + (error.message || error));
+      }
+    });
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
+class DuplicateSyncIdModal extends Modal {
+  constructor(app, plugin, groups) {
+    super(app);
+    this.plugin = plugin;
+    this.groups = groups || [];
+  }
+  onOpen() { this.render(); }
+  async refreshGroups() {
+    this.groups = await this.plugin.scanDuplicateSyncIds();
+    this.render();
+  }
+  render() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('elh-duplicate-modal');
+    contentEl.createEl('h2', { text: '重复同步 ID 诊断' });
+    contentEl.createEl('p', { text: '这里只检查当前启用的同步类型。整理时，未选中的笔记会移动到同步根目录之外的备份文件夹，内容不会被删除，也不会再参与同步。' });
+    if (!this.groups.length) {
+      contentEl.createEl('p', { text: '没有发现重复同步 ID。可以关闭此窗口并重新执行「现在同步」。', cls: 'elh-duplicate-empty' });
+      return;
+    }
+    contentEl.createEl('p', { text: '共发现 ' + this.groups.length + ' 组重复 ID。请逐组选择要保留的活动笔记。' });
+    for (const group of this.groups) {
+      const card = contentEl.createDiv({ cls: 'elh-duplicate-card' });
+      card.createEl('h3', { text: group.key });
+      const identicalText = group.identical
+        ? '这些文件的 Markdown 内容逐字节一致。'
+        : '这些文件内容存在差异。请先查看各版本预览，再选择要保留的版本。';
+      card.createEl('p', { text: group.files.length + ' 个文件 · ' + identicalText, cls: group.identical ? 'elh-duplicate-identical' : 'elh-duplicate-different' });
+
+      const selectLabel = card.createEl('label', { text: '保留为正式同步笔记：' });
+      const select = card.createEl('select', { cls: 'elh-duplicate-select' });
+      for (const entry of group.files) {
+        const option = select.createEl('option', { text: entry.path + ' · ' + entry.title });
+        option.value = entry.path;
+      }
+      select.value = group.files[0].path;
+
+      const list = card.createDiv({ cls: 'elh-duplicate-file-list' });
+      for (const entry of group.files) {
+        const row = list.createDiv({ cls: 'elh-duplicate-file-row' });
+        row.createEl('code', { text: entry.path });
+        const open = row.createEl('button', { text: '打开' });
+        open.addEventListener('click', async () => {
+          const current = this.app.vault.getAbstractFileByPath(entry.path);
+          if (current instanceof TFile) await this.app.workspace.getLeaf(false).openFile(current);
+          else new Notice('文件已不存在，请重新扫描。');
+        });
+      }
+
+      const details = card.createEl('details', { cls: 'elh-duplicate-previews' });
+      details.createEl('summary', { text: '展开各版本内容预览' });
+      for (const [index, entry] of group.files.entries()) {
+        details.createEl('h4', { text: (index + 1) + '. ' + entry.path });
+        const preview = entry.raw.length > 1800 ? entry.raw.slice(0, 1800) + '\n\n……（预览已截断，原文件不会改变）' : entry.raw;
+        details.createEl('pre', { text: preview });
+      }
+
+      const actions = card.createDiv({ cls: 'elh-duplicate-actions' });
+      const archive = actions.createEl('button', { text: group.identical ? '保留所选，安全归档其余副本' : '保留所选版本，备份其余笔记', cls: 'mod-cta' });
+      archive.addEventListener('click', () => {
+        const keepPath = select.value;
+        new ConfirmDuplicateArchiveModal(this.app, this.plugin, group, keepPath, () => this.refreshGroups()).open();
+      });
+    }
+  }
+  onClose() { this.contentEl.empty(); }
 }
 
 class EmbeddedLearningHubSettingTab extends PluginSettingTab {
@@ -906,7 +1399,8 @@ class EmbeddedLearningHubSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('课程笔记与学习进度').addToggle(toggle => toggle.setValue(this.plugin.settings.syncCourses).onChange(async value => { this.plugin.settings.syncCourses = value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('资源收藏').addToggle(toggle => toggle.setValue(this.plugin.settings.syncResources).onChange(async value => { this.plugin.settings.syncResources = value; await this.plugin.saveSettings(); }));
     new Setting(containerEl).setName('执行同步').setDesc('立即检查网站与当前 Vault 的差异，按稳定 ID 合并；同一条内容双端同时编辑时生成冲突副本，不静默覆盖。').addButton(button => button.setButtonText('现在同步').setCta().onClick(() => this.plugin.syncNow(true)));
-    containerEl.createEl('p', { text: '首次连接前，请先部署学习网站 V19、登录并完成至少一次云同步，以便将内置课程目录写入云端。首次 Obsidian 同步会根据云端内容创建 Markdown 笔记。' });
+    new Setting(containerEl).setName('重复同步 ID 检查').setDesc('扫描同步目录中的重复身份，显示全部文件路径和内容差异；可将未选中的副本移动到同步目录之外的备份文件夹。').addButton(button => button.setButtonText('扫描并整理').onClick(() => this.plugin.openDuplicateDiagnostics()));
+    containerEl.createEl('p', { text: '首次连接前，请先部署学习网站 V19 或更高版本、登录并完成至少一次云同步，以便将内置课程目录写入云端。首次 Obsidian 同步会根据云端内容创建 Markdown 笔记。' });
   }
 }
 
