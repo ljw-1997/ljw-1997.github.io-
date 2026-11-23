@@ -2335,6 +2335,16 @@ function pageButton(label,page,kind='secondary',ico=''){return `<button class="b
 function getGreeting(){const h=new Date().getHours();return h<11?'早上好':h<14?'中午好':h<18?'下午好':'晚上好'}
 let mobileNavReturnFocus=null;
 let modalReturnFocus=null;
+let modalCloseTimer=null;
+let modalClosing=false;
+function finishModalClose(root=document.getElementById('modal-root')){
+ if(modalCloseTimer){clearTimeout(modalCloseTimer);modalCloseTimer=null;}
+ modalClosing=false;
+ if(root){root.innerHTML='';root.classList.remove('is-closing');}
+ document.body.classList.remove('modal-open');
+ if(modalReturnFocus&&modalReturnFocus.isConnected){modalReturnFocus.focus({preventScroll:true});}
+ modalReturnFocus=null;
+}
 function setMobileNav(open,restoreFocus=true){
  const sidebar=document.getElementById('sidebar');
  const backdrop=document.getElementById('mobile-nav-backdrop');
@@ -2407,12 +2417,42 @@ function renderApp(){
   const title=document.getElementById('breadcrumb-title');if(title)title.textContent='数据恢复';
   const date=document.getElementById('top-date');if(date)date.textContent='本地数据保护';
   const avatar=document.getElementById('avatar-initial');if(avatar)avatar.textContent='!';
-  const modalRoot=document.getElementById('modal-root');if(modalRoot)modalRoot.innerHTML='';
+  const modalRoot=document.getElementById('modal-root');
+  if(modalCloseTimer){clearTimeout(modalCloseTimer);modalCloseTimer=null;}
+  modalClosing=false;modalReturnFocus=null;
+  if(modalRoot){modalRoot.innerHTML='';modalRoot.classList.remove('is-closing');}
   document.body.classList.remove('modal-open');
   stopUsageMonitor();
   return;
  }
- if(ui.page==='plans')ui.page='dashboard';const [title]=pageMeta();document.getElementById('breadcrumb-title').textContent=title;document.getElementById('top-date').textContent=new Intl.DateTimeFormat('zh-CN',{month:'long',day:'numeric',weekday:'short'}).format(new Date());document.getElementById('avatar-initial').textContent=(state.profileName||'学').trim().slice(0,1);const courseCount=document.getElementById('course-count');if(courseCount)courseCount.textContent=allCourses().length;const recordCount=document.getElementById('record-count');if(recordCount)recordCount.textContent=state.records.length;const navPage=ui.page==='search'?'':ui.page;document.querySelectorAll('.nav-item[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===navPage));const lessons=allLessons();const pct=lessons.length?Math.round(lessons.filter(l=>isDone(l.id)).length/lessons.length*100):0;const progress=document.getElementById('sidebar-learning-progress');if(progress)progress.style.width=pct+'%';const main=document.getElementById('main');main.innerHTML=({dashboard:renderDashboard,learning:renderLearning,records:renderRecords,resources:renderResources,knowledge:renderKnowledge,settings:renderSettings,search:renderSearch})[ui.page]();if(ui.page==='settings')startUsageMonitor();else stopUsageMonitor();const modalRoot=document.getElementById('modal-root');const hadModal=Boolean(modalRoot.querySelector('[role="dialog"]'));if(ui.modal&&!hadModal)modalReturnFocus=document.activeElement;modalRoot.innerHTML=ui.modal?renderModal():'';normalizeModalChrome(modalRoot);const dialog=modalRoot.querySelector('[role="dialog"]');document.body.classList.toggle('modal-open',Boolean(dialog));if(dialog){dialog.setAttribute('tabindex','-1');const target=dialog.querySelector('input:not([type="hidden"]):not([data-avoid-modal-autofocus]),textarea,select,[contenteditable="true"]')||dialog.querySelector('button:not([disabled])')||dialog;requestAnimationFrame(()=>target.focus({preventScroll:true}));}else if(hadModal&&modalReturnFocus&&modalReturnFocus.isConnected){modalReturnFocus.focus({preventScroll:true});modalReturnFocus=null;}setMobileNav(false,false);}
+ if(ui.page==='plans')ui.page='dashboard';const [title]=pageMeta();document.getElementById('breadcrumb-title').textContent=title;document.getElementById('top-date').textContent=new Intl.DateTimeFormat('zh-CN',{month:'long',day:'numeric',weekday:'short'}).format(new Date());document.getElementById('avatar-initial').textContent=(state.profileName||'学').trim().slice(0,1);const courseCount=document.getElementById('course-count');if(courseCount)courseCount.textContent=allCourses().length;const recordCount=document.getElementById('record-count');if(recordCount)recordCount.textContent=state.records.length;const navPage=ui.page==='search'?'':ui.page;document.querySelectorAll('.nav-item[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===navPage));const lessons=allLessons();const pct=lessons.length?Math.round(lessons.filter(l=>isDone(l.id)).length/lessons.length*100):0;const progress=document.getElementById('sidebar-learning-progress');if(progress)progress.style.width=pct+'%';const main=document.getElementById('main');main.innerHTML=({dashboard:renderDashboard,learning:renderLearning,records:renderRecords,resources:renderResources,knowledge:renderKnowledge,settings:renderSettings,search:renderSearch})[ui.page]();if(ui.page==='settings')startUsageMonitor();else stopUsageMonitor();
+ const modalRoot=document.getElementById('modal-root');
+ const hadModal=Boolean(modalRoot.querySelector('[role="dialog"]'));
+ if(ui.modal){
+  if(modalCloseTimer){clearTimeout(modalCloseTimer);modalCloseTimer=null;}
+  modalClosing=false;modalRoot.classList.remove('is-closing');
+  if(!hadModal)modalReturnFocus=document.activeElement;
+  modalRoot.innerHTML=renderModal();normalizeModalChrome(modalRoot);
+  const dialog=modalRoot.querySelector('[role="dialog"]');
+  if(dialog){document.body.classList.add('modal-open');dialog.setAttribute('tabindex','-1');const target=dialog.querySelector('input:not([type="hidden"]):not([data-avoid-modal-autofocus]),textarea,select,[contenteditable="true"]')||dialog.querySelector('button:not([disabled])')||dialog;requestAnimationFrame(()=>{if(dialog.isConnected&&!modalClosing)target.focus({preventScroll:true});});}
+  else{document.body.classList.remove('modal-open');}
+ }else if(hadModal){
+  if(!modalClosing){
+   modalClosing=true;modalRoot.classList.add('is-closing');
+   const backdrop=modalRoot.querySelector('.modal-backdrop'),dialog=modalRoot.querySelector('[role="dialog"]');
+   backdrop?.classList.add('is-closing');
+   if(dialog){dialog.classList.add('is-closing');dialog.setAttribute('aria-hidden','true');if('inert' in dialog)dialog.inert=true;}
+   const reducedMotion=Boolean(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+   const closeDelay=reducedMotion?0:190;
+   if(closeDelay===0)finishModalClose(modalRoot);else modalCloseTimer=setTimeout(()=>finishModalClose(modalRoot),closeDelay);
+  }
+  document.body.classList.add('modal-open');
+ }else{
+  if(modalCloseTimer){clearTimeout(modalCloseTimer);modalCloseTimer=null;}
+  modalClosing=false;modalRoot.classList.remove('is-closing');modalRoot.innerHTML='';document.body.classList.remove('modal-open');
+ }
+ setMobileNav(false,false);
+}
 function renderDashboard(){
  const lessons=allLessons(),done=lessons.filter(l=>isDone(l.id)).length,pct=lessons.length?Math.round(done/lessons.length*100):0;
  const lastRead=getLastReadPosition();
@@ -2805,7 +2845,13 @@ function knowledgeEditorHtml(content){const source=String(content||'');if(!sourc
 function richHtmlPlainText(value){if(typeof DOMParser==='undefined')return String(value||'').replace(/<[^>]*>/g,' ').trim();const doc=new DOMParser().parseFromString(String(value||''),'text/html');return (doc.body.textContent||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim();}
 function storedLessonSource(id){for(const group of Object.values(state.addedLessons||{})){const found=(group||[]).find(x=>x.id===id);if(found)return found;}for(const c of state.customCourses||[]){const found=(c.lessons||[]).find(x=>x.id===id);if(found)return found;}return null;}
 function replaceSelectionWithHtml(editor,html){restoreRichEditorSelection(editor);const before=editor.innerHTML;let inserted=false;try{document.execCommand('insertHTML',false,html);inserted=editor.innerHTML!==before;}catch(_){}if(!inserted){const sel=window.getSelection();if(sel&&sel.rangeCount&&editor.contains(sel.anchorNode)){const range=sel.getRangeAt(0);range.deleteContents();const holder=document.createElement('template');holder.innerHTML=html;const frag=holder.content;const last=frag.lastChild;range.insertNode(frag);if(last){range.setStartAfter(last);range.collapse(true);sel.removeAllRanges();sel.addRange(range);}}else editor.insertAdjacentHTML('beforeend',html);}updateRichEditorHidden(editor);editor.dispatchEvent(new Event('input',{bubbles:true}));}
-function openMediaLightbox(src,alt='图片预览'){const previous=document.getElementById('rich-media-lightbox');if(previous)previous.remove();const root=document.createElement('div');root.id='rich-media-lightbox';root.className='rich-media-lightbox';root.setAttribute('role','dialog');root.setAttribute('aria-modal','true');root.setAttribute('aria-label','图片放大预览');root.innerHTML=`<button type="button" class="rich-media-lightbox-close" aria-label="关闭图片预览">×</button><img src="${esc(src)}" alt="${esc(alt)}"><div class="rich-media-lightbox-caption">${esc(alt||'图片预览')} · 点击右上角关闭或按 Esc 退出</div>`;root.addEventListener('click',e=>{if(e.target.closest('.rich-media-lightbox-close'))root.remove();});document.body.appendChild(root);}
+function closeMediaLightbox(root=document.getElementById('rich-media-lightbox')){
+ if(!root||!root.isConnected||root.classList.contains('is-closing'))return;
+ root.classList.add('is-closing');root.setAttribute('aria-hidden','true');
+ const reducedMotion=Boolean(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+ setTimeout(()=>root.remove(),reducedMotion?0:150);
+}
+function openMediaLightbox(src,alt='图片预览'){const previous=document.getElementById('rich-media-lightbox');if(previous)previous.remove();const root=document.createElement('div');root.id='rich-media-lightbox';root.className='rich-media-lightbox';root.setAttribute('role','dialog');root.setAttribute('aria-modal','true');root.setAttribute('aria-label','图片放大预览');root.innerHTML=`<button type="button" class="rich-media-lightbox-close" aria-label="关闭图片预览">×</button><img src="${esc(src)}" alt="${esc(alt)}"><div class="rich-media-lightbox-caption">${esc(alt||'图片预览')} · 点击右上角关闭或按 Esc 退出</div>`;root.addEventListener('click',e=>{if(e.target.closest('.rich-media-lightbox-close'))closeMediaLightbox(root);});document.body.appendChild(root);}
 function richAttachmentMime(file){
  const rawMime=String(file?.type||'').toLowerCase().split(';')[0].trim();
  const extension=String(file?.name||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
@@ -3235,7 +3281,7 @@ function expireUndoEntry(id){
  const remaining=entry.expiresAt-Date.now();
  if(remaining>0){scheduleUndoExpiry(entry);return;}
  removePendingUndoEntry(id);persistPendingDeleteUndos();cleanupExpiredStorageMedia(entry);
- const root=document.getElementById('toast-root');root?.querySelectorAll('.toast-undo').forEach(node=>{if(node.dataset.undoId===id)node.remove();});
+ const root=document.getElementById('toast-root');root?.querySelectorAll('.toast-undo').forEach(node=>{if(node.dataset.undoId===id){node.classList.add('is-leaving');setTimeout(()=>node.remove(),170);}});
  stopUndoProgressTimerIfIdle();
 }
 function scheduleUndoExpiry(entry){
@@ -3259,7 +3305,6 @@ function updateUndoToastProgress(){
   const bar=toast.querySelector('[data-undo-progress]');if(bar)bar.style.width=`${(ratio*100).toFixed(2)}%`;
   const seconds=toast.querySelector('[data-undo-seconds]');if(seconds){const next=Math.ceil(remaining/1000);if(seconds.textContent!==String(next))seconds.textContent=String(next);}
  });
- if(expired.length){expired.forEach(id=>root?.querySelectorAll('.toast-undo').forEach(node=>{if(node.dataset.undoId===id)node.remove();}));}
  stopUndoProgressTimerIfIdle();
 }
 function renderUndoToasts(){
@@ -3333,7 +3378,11 @@ function undoLastDelete(id=null){
 function showToast(message){
  const root=document.getElementById('toast-root');if(!root)return;
  const node=document.createElement('div');node.className='toast toast-message';node.setAttribute('role','status');node.textContent=String(message||'');root.append(node);
- setTimeout(()=>node.remove(),2800);
+ setTimeout(()=>{
+  if(!node.isConnected)return;
+  node.classList.add('is-leaving');node.setAttribute('aria-hidden','true');
+  setTimeout(()=>node.remove(),180);
+ },2600);
 }
 function getLastReadPosition(){
  try{const raw=localStorage.getItem(LAST_READ_STORAGE_KEY);if(!raw)return null;const value=JSON.parse(raw);if(!value||typeof value.lessonId!=='string'||!findLesson(value.lessonId)){localStorage.removeItem(LAST_READ_STORAGE_KEY);return null;}return value;}catch(_){return null;}
@@ -3611,7 +3660,7 @@ function finishRichPointerResize(e){const drag=richPointerResize;if(!drag||e.poi
 document.addEventListener('pointerup',finishRichPointerResize,true);document.addEventListener('pointercancel',finishRichPointerResize,true);
 document.addEventListener('click',function(e){const resized=window.__richResizeRecentFrame;if(resized&&Date.now()-(window.__richResizeRecentAt||0)<500&&e.target.closest('.rich-image-frame')===resized){e.preventDefault();e.stopPropagation();window.__richResizeRecentFrame=null;return;}const button=e.target.closest('[data-rich-insert]');if(button){e.preventDefault();const wrap=button.closest('.rich-editor-shell'),editor=wrap?.querySelector('[data-rich-editor]');if(editor){rememberRichEditorSelection();const input=wrap.querySelector(`[data-rich-file-input="${button.dataset.richInsert}"]`);if(input)input.click();}return;}const image=e.target.closest('.rich-image-frame img,.knowledge-rich-content img,.editable-lesson-body img');if(image){e.preventDefault();e.stopPropagation();openMediaLightbox(image.currentSrc||image.src,image.alt||image.title||'图片预览');}},true);
 document.addEventListener('change',function(e){const input=e.target.closest('[data-rich-file-input]');if(input&&input.files&&input.files[0])insertRichMediaFile(input,input.files[0]);});
-window.addEventListener('keydown',function(e){if(e.key==='Escape'){const lightbox=document.getElementById('rich-media-lightbox');if(lightbox){lightbox.remove();e.preventDefault();e.stopImmediatePropagation();}}},true);
+window.addEventListener('keydown',function(e){if(e.key==='Escape'){const lightbox=document.getElementById('rich-media-lightbox');if(lightbox){closeMediaLightbox(lightbox);e.preventDefault();e.stopImmediatePropagation();}}},true);
 
 
 document.addEventListener('click',function(e){const undo=e.target.closest('[data-action="undo-delete"]');if(!undo)return;e.preventDefault();e.stopPropagation();undoLastDelete(undo.dataset.undoId||null);},true);

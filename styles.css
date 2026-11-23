@@ -1989,3 +1989,102 @@ input::placeholder,textarea::placeholder{color:#849187;opacity:1}
 @keyframes rich-upload-indeterminate{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}
 @media(max-width:740px){.rich-upload-progress{margin:0 8px 9px;padding:9px 10px}.rich-upload-progress-head{gap:7px;margin-bottom:7px}}
 @media(prefers-reduced-motion:reduce){.rich-upload-progress-track>span,.rich-upload-progress[data-state="uploading"] .rich-upload-status-mark:before{animation:none!important;transition:none}}
+
+/* V20.4 · Global motion system: consistent entrances, exits and tactile feedback. */
+:root{
+  --motion-quick:140ms;
+  --motion-base:220ms;
+  --motion-enter:290ms;
+  --motion-ease:cubic-bezier(.2,.72,.24,1);
+  --motion-emphasis:cubic-bezier(.16,1,.3,1);
+}
+
+/* Dialogs: subtle lift on open, symmetrical fade/lift on close. */
+#modal-root{pointer-events:auto}
+#modal-root.is-closing{pointer-events:none}
+#modal-root .modal-backdrop:not(.is-closing){animation:ui-backdrop-in 220ms ease both}
+#modal-root .modal:not(.is-closing){animation:ui-dialog-in 290ms var(--motion-emphasis) both}
+#modal-root .modal-backdrop.is-closing{animation:ui-backdrop-out 180ms ease both;pointer-events:none}
+#modal-root .modal.is-closing{animation:ui-dialog-out 180ms var(--motion-ease) both;pointer-events:none}
+@keyframes ui-backdrop-in{from{opacity:0}to{opacity:1}}
+@keyframes ui-backdrop-out{from{opacity:1}to{opacity:0}}
+@keyframes ui-dialog-in{from{opacity:0;transform:translate3d(0,12px,0) scale(.985)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+@keyframes ui-dialog-out{from{opacity:1;transform:translate3d(0,0,0) scale(1)}to{opacity:0;transform:translate3d(0,8px,0) scale(.99)}}
+
+/* Mobile navigation: one shared timing curve for drawer and scrim. */
+@media(max-width:900px){
+  .sidebar{transition:transform 260ms var(--motion-emphasis);will-change:transform}
+  .mobile-nav-backdrop{transition:opacity 240ms ease,visibility 240ms ease}
+}
+
+/* Page and collection entrances are intentionally short and low-amplitude. */
+.main>.page-head,
+.main>.panel,
+.main>.grid,
+.main>.catalog-tools,
+.main>.course-grid,
+.main>.knowledge-grid,
+.main>.records-list{animation:ui-content-in 280ms var(--motion-emphasis) both}
+.main>.page-head{animation-delay:0ms}
+.main>.grid.stats{animation-delay:24ms}
+.main>.dashboard-grid{animation-delay:48ms}
+.main>.course-grid,
+.main>.knowledge-grid,
+.main>.records-list{animation-delay:32ms}
+@keyframes ui-content-in{from{opacity:0;transform:translate3d(0,8px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
+.course-grid>.course-card,
+.resource-grid>.resource-card,
+.knowledge-grid>.note-card,
+.records-list>.record-card{animation:ui-card-in 300ms var(--motion-emphasis) both}
+.course-grid>.course-card:nth-child(2),.resource-grid>.resource-card:nth-child(2),.knowledge-grid>.note-card:nth-child(2),.records-list>.record-card:nth-child(2){animation-delay:24ms}
+.course-grid>.course-card:nth-child(3),.resource-grid>.resource-card:nth-child(3),.knowledge-grid>.note-card:nth-child(3),.records-list>.record-card:nth-child(3){animation-delay:48ms}
+.course-grid>.course-card:nth-child(4),.resource-grid>.resource-card:nth-child(4),.knowledge-grid>.note-card:nth-child(4),.records-list>.record-card:nth-child(4){animation-delay:72ms}
+@keyframes ui-card-in{from{opacity:0;transform:translate3d(0,9px,0) scale(.995)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+
+/* Consistent press feedback and property-specific transitions avoid animating layout. */
+.btn,.icon-btn,.filter-chip,.nav-item,.rich-tool-button,.toast-undo-action{
+  transition-timing-function:var(--motion-ease);
+}
+.btn{transition-property:transform,box-shadow,border-color,background-color,color;transition-duration:180ms}
+.icon-btn,.filter-chip,.nav-item,.rich-tool-button,.toast-undo-action{transition-duration:160ms}
+:is(.btn,.icon-btn,.filter-chip,.nav-item,.rich-tool-button,.toast-undo-action):active:not(:disabled){transform:translateY(0) scale(.985);transition-duration:80ms}
+button:disabled{cursor:not-allowed}
+.stat-card,.panel,.course-card,.resource-card,.record-card,.note-card,.week-mini{
+  transition-timing-function:var(--motion-ease);
+}
+
+/* Toast exit mirrors its entrance instead of disappearing abruptly. */
+#toast-root>.toast-message{animation:ui-toast-in 240ms var(--motion-emphasis) both}
+#toast-root>.toast-message.is-leaving{animation:ui-toast-out 170ms ease both;pointer-events:none}
+@keyframes ui-toast-in{from{opacity:0;transform:translate3d(0,9px,0) scale(.985)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+@keyframes ui-toast-out{from{opacity:1;transform:translate3d(0,0,0) scale(1)}to{opacity:0;transform:translate3d(0,6px,0) scale(.99)}}
+
+/* Honour the operating system's reduced-motion preference across every surface. */
+@media(prefers-reduced-motion:reduce){
+  #modal-root .modal-backdrop:not(.is-closing),
+  #modal-root .modal:not(.is-closing),
+  #modal-root .modal-backdrop.is-closing,
+  #modal-root .modal.is-closing,
+  .main>.page-head,.main>.panel,.main>.grid,.main>.catalog-tools,
+  .main>.course-grid,.main>.knowledge-grid,.main>.records-list,
+  .course-grid>.course-card,.resource-grid>.resource-card,
+  .knowledge-grid>.note-card,.records-list>.record-card,
+  #toast-root>.toast-message,#toast-root>.toast-message.is-leaving{
+    animation:none!important;
+  }
+  .sidebar,.mobile-nav-backdrop{transition:none!important;will-change:auto!important}
+  :is(.btn,.icon-btn,.filter-chip,.nav-item,.rich-tool-button,.toast-undo-action):active:not(:disabled){transform:none!important}
+}
+
+/* Media lightbox close motion uses the same compact motion language. */
+#rich-media-lightbox:not(.is-closing){animation:ui-lightbox-in 220ms var(--motion-emphasis) both}
+#rich-media-lightbox.is-closing{animation:ui-lightbox-out 150ms ease both;pointer-events:none}
+#rich-media-lightbox img{animation:ui-lightbox-image-in 280ms var(--motion-emphasis) both}
+@keyframes ui-lightbox-in{from{opacity:0}to{opacity:1}}
+@keyframes ui-lightbox-out{from{opacity:1}to{opacity:0}}
+@keyframes ui-lightbox-image-in{from{opacity:0;transform:translate3d(0,9px,0) scale(.985)}to{opacity:1;transform:translate3d(0,0,0) scale(1)}}
+#toast-root>.toast-undo.is-leaving{animation:ui-toast-out 170ms ease both;pointer-events:none}
+@media(prefers-reduced-motion:reduce){
+  #rich-media-lightbox:not(.is-closing),#rich-media-lightbox.is-closing,
+  #rich-media-lightbox img,#toast-root>.toast-undo.is-leaving{animation:none!important}
+}
