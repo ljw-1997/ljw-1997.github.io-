@@ -1,0 +1,11 @@
+# V20.0 基础测试
+
+本目录使用 Node.js 内置测试运行器，不需要安装 npm 依赖：
+
+```bash
+node --test tests/*.test.cjs
+```
+
+当前测试覆盖工作区数据 Schema 与本地损坏恢复分支、关键 Supabase SQL 契约、revision compare-and-swap 同步条件，以及恢复保护代码路径。
+
+这些是无需真实 Supabase 项目的静态/单元级检查，不替代浏览器端交互测试、真实账号 RLS 验证或两台设备的端到端同步测试。RLS 手工检查步骤见 `supabase/tests/workspace-rls-smoke-test.sql`。

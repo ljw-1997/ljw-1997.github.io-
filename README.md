@@ -1,6 +1,6 @@
 # 嵌入式学习站 · Embedded Learning Station
 
-**当前版本：V19.2（移除应用层附件与图片大小限制）**
+**当前版本：V20.0（数据安全与持久化基础加固）**
 
 一个无需构建步骤的中文嵌入式学习工作台，可直接部署到 GitHub Pages。网站使用原生 HTML、CSS 和 JavaScript；本地数据保存在浏览器中，可选接入 Supabase Auth 与 PostgreSQL 实现跨设备同步。
 
@@ -25,10 +25,11 @@
 | `index.html` | 页面入口 |
 | `styles.css` | 页面样式与响应式布局 |
 | `app.js` | 课程数据、界面渲染、交互和本地数据处理 |
+| `workspace-schema.js` | 工作区运行时 Schema 校验（浏览器与测试共用） |
 | `sync-config.js` | Supabase 公共连接配置，可留空 |
 | `sync-client.js` | Supabase 登录、云端保存/恢复、冲突处理和容量监控调用 |
 | `.nojekyll` | GitHub Pages 静态文件发布标记 |
-| `supabase/` | 容量监控 SQL、Edge Function 与函数配置（需部署到 Supabase，不上传 GitHub Pages 根目录作为静态资源） |
+| `supabase/` | 工作区建表/RLS/Realtime SQL、容量监控 SQL、Edge Function 与安全检查（需部署到 Supabase） |
 | `README.md` | 使用说明与版本迭代记录 |
 
 部署步骤：
@@ -50,12 +51,13 @@ python -m http.server 8000
 
 云同步是可选功能。不配置 Supabase 时，学习站仍可在当前浏览器本地使用；配置并登录后，工作区数据可在同一账号的多台设备间同步。
 
-1. 在 Supabase 项目中完成工作区数据表和 Row Level Security（RLS）策略初始化。
+1. 在 Supabase Dashboard → SQL Editor 中以数据库管理员身份运行 `supabase/sql/workspace-schema.sql`。脚本会创建 `embedded_learning_workspaces`，配置每用户 SELECT/INSERT/UPDATE RLS 策略，并将表加入 `supabase_realtime` publication。脚本可重复运行。
 2. 在 Supabase 的 Project Connect / API Keys 页面获取 Project URL 和 **publishable key**（旧项目的 anon key 仍可使用）。
 3. 在网站「偏好与数据 → 跨设备云同步 → Supabase 连接配置」中填写 URL 和 key，保存并登录。
 4. 首次迁移本机数据或恢复云端数据时，按页面提示明确选择操作；覆盖数据前建议先导出 JSON 备份。
+5. 如需项目容量监控，再按后文说明额外部署 `usage-monitor.sql` 和 Edge Function。
 
-**本精简发行包不包含 Supabase 数据库初始化 SQL、RLS 测试文件或测试目录。** 当前已初始化的 Supabase 项目不受影响；V18 不需要修改数据库表结构或 RLS 策略。若要接入全新的 Supabase 项目，需要从你自己的安全备份或既有数据库维护资料中恢复相应的表结构与 RLS 策略。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
+`workspace-schema.sql` 是 V20.0 随包提供的工作区初始化脚本。对于已经有数据的现有项目，执行前应先做数据库备份；脚本会创建表（如果不存在）、补充缺少的状态字段、重建本项目使用的三条 RLS 策略，并确保 Realtime publication 包含工作区表。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
 
 如需让新设备自动获得连接地址，可在部署前将默认 Project URL 和公开 publishable key 填入 `sync-config.js`。若留空，则每台设备都可以在网站设置页单独配置。
 
@@ -82,6 +84,18 @@ V19.2 已移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 
 若要稳定支持大量或几十 MB 以上的文件，下一阶段应将二进制附件改为 Supabase Storage 对象，并在数据库只保存对象路径和元数据；单纯移除前端限制不能突破浏览器或 Supabase 平台配额。
 
+## 本地工作区校验与恢复（V20.0）
+
+应用启动时会对本地工作区执行结构校验。若 JSON 无法解析或关键字段不符合 Schema，页面会进入只读恢复保护模式：不会把临时初始数据写回 `localStorage`，也会暂停云同步，避免把空白工作区上传并覆盖原始数据。
+
+建议恢复顺序：
+
+1. 在恢复页面点击「下载原始本地数据」，先保存浏览器中读取到的原始内容（即使 JSON 已损坏也会原样导出）。
+2. 选择最近一次由本应用导出的 JSON 备份。导入内容会先进行严格结构校验，再写入本地存储。
+3. 只有在确认已有原始数据副本、且决定放弃损坏工作区时，才使用「初始化空工作区」。有有效原始数据时，页面会要求先导出后才能执行重置。
+
+如果浏览器完全拒绝访问 `localStorage`，恢复页仍允许导入备份；但是否能完成恢复取决于浏览器是否恢复了站点存储权限。
+
 ## 数据保存与备份
 
 - 未启用云同步时，课程编辑、完成状态、知识卡片、资源收藏、每日记录和个人偏好保存在当前浏览器的本地存储中。
@@ -89,6 +103,16 @@ V19.2 已移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 - 启用 Supabase 并完成账号关联后，工作区数据会按同步状态上传到云端。
 - 清除浏览器站点数据、重置工作区或使用旧备份覆盖数据前，请先导出完整工作区 JSON，或确认云端同步已经完成。
 - 网站代码仓库不包含个人知识卡片种子文件；已有知识卡片属于用户工作区数据，需通过本地存储、云同步或完整 JSON 备份保留和迁移。
+
+## 基础测试（V20.0）
+
+需要 Node.js 18 或更高版本，无需安装 npm 依赖：
+
+```bash
+node --test tests/*.test.cjs
+```
+
+测试覆盖工作区 Schema、本地损坏数据恢复分支、工作区 SQL/RLS/Realtime 契约、revision compare-and-swap 关键条件，以及恢复保护代码路径。它们属于本地静态/单元级检查，不替代真实 Supabase 项目的 RLS 登录态测试或多设备端到端测试。部署后可按 `supabase/tests/workspace-rls-smoke-test.sql` 对真实 Auth 用户执行 RLS 可见性检查。
 
 ## 安全与隐私
 
@@ -124,8 +148,9 @@ V19.2 已移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 | V19（容量监控增补） | 在设置页增加数据库与 Storage 容量监控；通过带用户白名单的 Edge Function 调用受限 SQL RPC，浏览器不接触服务端密钥。 |
 | V19.1（ZIP 附件兼容修复） | 识别 `application/x-zip-compressed`、`application/x-zip`、`multipart/x-zip` 及无 MIME 但扩展名为 `.zip` 的文件；统一写入 `application/zip` Data URL，避免保存时被 HTML 白名单清洗。 |
 | V19.2（解除应用层媒体大小限制） | 移除单文件、总媒体、Data URL 长度、图片像素尺寸与 JSON 备份导入的应用层固定上限；明确提示浏览器本地存储和 Supabase 数据库仍有平台配额。 |
+| V20.0 | 加入工作区严格 Schema 校验；本地 JSON 损坏时进入只读恢复保护模式并保留原始数据导出入口；恢复期间阻止本地保存和云同步；补充 Supabase 工作区建表、每用户 RLS 与 Realtime 初始化 SQL；新增 Node 内置测试及 RLS 手工烟雾测试。 |
 
 ---
 
 **项目类型：** 静态 HTML/CSS/JavaScript 应用，无构建步骤。  
-**当前发行版本：** V19.2 · Remove App-Level Media Size Limits
+**当前发行版本：** V20.0 · Workspace Data Safety Baseline

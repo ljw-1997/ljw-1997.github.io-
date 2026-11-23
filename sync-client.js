@@ -82,6 +82,10 @@
     emit();
   }
   function getAppStateOrThrow() {
+    const a = app();
+    if (a && typeof a.isRecoveryMode === 'function' && a.isRecoveryMode()) {
+      throw new Error('本机工作区处于数据恢复保护模式。云同步已暂停，避免上传临时空白数据或覆盖原始内容；请先导入有效备份或明确初始化工作区。');
+    }
     const value = currentState();
     if (!value || typeof value !== 'object') throw new Error('页面数据还未准备好，请刷新后重试。');
     return clone(value);
