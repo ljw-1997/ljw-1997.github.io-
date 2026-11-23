@@ -70,3 +70,30 @@ test('browser sync uploads and signs private Storage media, then migrates legacy
   assert.match(app, /data-storage-ref/);
   assert.match(app, /uploadMediaFile\(file,mime\)/);
 });
+
+test('Storage cleanup scans only the authenticated user tree and deletes through the Storage API', () => {
+  assert.match(sync, /async function listStorageObjectsRecursive/);
+  assert.match(sync, /String\(user\.id\)\.toLowerCase\(\) \+ '\/'/);
+  assert.match(sync, /client\.storage\.from\(STORAGE_BUCKET\)\.list\(folderPath/);
+  assert.match(sync, /client\.storage\.from\(STORAGE_BUCKET\)\.remove\(batch\)/);
+  assert.match(sync, /index \+= 1000/);
+  assert.match(sync, /async function scanStorageCleanup/);
+  assert.match(sync, /async function cleanupOrphanedStorage/);
+  assert.match(sync, /collectStorageMediaReferences\(row\.state, referencedPaths\)/);
+  assert.match(sync, /getPendingUndoMediaReferences/);
+  assert.match(sync, /getActiveEditorStorageMediaReferences/);
+  assert.match(app, /data-action="scan-storage"/);
+  assert.match(app, /data-action="cleanup-storage"/);
+  assert.match(app, /renderStorageCleanupPanel\(ss\)/);
+});
+
+test('module deletion keeps attachments during undo and reclaims only after undo expiry', () => {
+  assert.match(app, /const mediaBefore=collectWorkspaceStorageMediaReferences\(undoBefore\)/);
+  assert.match(app, /const mediaAfter=collectWorkspaceStorageMediaReferences\(state\)/);
+  assert.match(app, /mediaCandidates=Array\.from\(mediaBefore\)\.filter\(reference=>!mediaAfter\.has\(reference\)\)/);
+  assert.match(app, /cleanupExpiredStorageMedia\(entry\)/);
+  assert.match(app, /removePendingUndoEntry\(id\);persistPendingDeleteUndos\(\);cleanupExpiredStorageMedia\(entry\)/);
+  assert.match(app, /getPendingUndoMediaReferences:\(\)=>Array\.from\(new Set\(pendingDeleteUndos\.flatMap/);
+  assert.match(app, /getActiveEditorStorageMediaReferences:\(\)=>\{const refs=new Set\(\);document\.querySelectorAll/);
+  assert.match(sync, /pendingUndoReferences\.forEach\(reference =>/);
+});

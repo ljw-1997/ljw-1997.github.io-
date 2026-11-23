@@ -1,6 +1,6 @@
 # 嵌入式学习站 · Embedded Learning Station
 
-**当前版本：V20.1（Supabase Storage 媒体对象迁移）**
+**当前版本：V20.2（Storage 孤儿对象自动回收与手动清理）**
 
 一个无需构建步骤的中文嵌入式学习工作台，可直接部署到 GitHub Pages。网站使用原生 HTML、CSS 和 JavaScript；本地数据保存在浏览器中，可选接入 Supabase Auth 与 PostgreSQL 实现跨设备同步。
 
@@ -27,7 +27,7 @@
 | `app.js` | 课程数据、界面渲染、交互和本地数据处理 |
 | `workspace-schema.js` | 工作区运行时 Schema 校验（浏览器与测试共用） |
 | `sync-config.js` | Supabase 公共连接配置，可留空 |
-| `sync-client.js` | Supabase 登录、云端保存/恢复、冲突处理和容量监控调用 |
+| `sync-client.js` | Supabase 登录、云端保存/恢复、冲突处理、媒体对象管理和 Storage 孤儿清理 |
 | `.nojekyll` | GitHub Pages 静态文件发布标记 |
 | `supabase/` | 工作区建表/RLS/Realtime SQL、Storage Bucket 与对象 RLS SQL、容量监控 SQL、Edge Function 与安全检查（需部署到 Supabase） |
 | `README.md` | 使用说明与版本迭代记录 |
@@ -62,7 +62,7 @@ python -m http.server 8000
 如需让新设备自动获得连接地址，可在部署前将默认 Project URL 和公开 publishable key 填入 `sync-config.js`。若留空，则每台设备都可以在网站设置页单独配置。
 
 
-### Supabase Storage 图片与附件（V20.1）
+### Supabase Storage 图片与附件（V20.1–V20.2）
 
 登录 Supabase 账号后，富文本编辑器会把选中的图片/附件二进制直接上传到私有 Bucket `knowledge-media`，对象路径采用 `<auth.uid()>/<随机文件名>.<扩展名>`。数据库中的 HTML 只保存 `supabase-storage://knowledge-media/<user-id>/<object-name>` 稳定引用，不再把文件 Base64 写入 `embedded_learning_workspaces.state`。展示时由浏览器按当前登录用户生成有效期 15 分钟的 signed URL；signed URL 不写回工作区，也不会作为永久文件地址跨设备同步。
 
@@ -70,7 +70,17 @@ python -m http.server 8000
 
 **旧附件迁移：** 部署 V20.1 后，已登录用户启动云同步时，客户端会检测旧工作区 HTML 中的 Base64 `src`/`href`，先上传对应二进制到 Storage，再使用 revision compare-and-swap 更新 JSONB 状态。首次迁移本机数据、恢复云端、覆盖云端和后续自动同步也都会经过同一迁移步骤。迁移遇到 Storage 权限或网络错误时，本次云端写入会停止，原有数据不会被 Base64 状态覆盖；请检查 Bucket/RLS 后重试。离线或未登录时，为保持本地可用性，新附件仍可能暂存在当前浏览器的旧式 Data URL 格式；用户登录并同步后会转换为 Storage 对象引用。
 
-**备份注意：** V20.1 的工作区 JSON 导出会保存对象引用，不会打包 Storage 二进制文件。需要跨项目迁移或长期离线归档时，应同时保留 Supabase Storage 对象；删除知识卡片/课时不会自动删除其 Storage 对象，以避免不同步设备引用的文件被提前删除。可在 Dashboard → Storage → `knowledge-media` 管理对象。
+**备份注意：** 工作区 JSON 导出会保存对象引用，不会打包 Storage 二进制文件。需要跨项目迁移或长期离线归档时，应同时保留 Supabase Storage 对象。
+
+### Supabase Storage 自动回收与清理（V20.2）
+
+- **删除模块/课程/课时/知识卡片后自动回收：** 删除操作仍保留原有 10 秒撤销窗口。撤销期间，附件对象不会被删除；窗口结束或后续操作使撤销记录失效后，客户端会比较删除前后的工作区引用，只把本次不再使用的对象作为候选。
+- **引用保护：** 自动回收前会先确保当前工作区同步成功，再检查当前浏览器工作区、云端 JSONB 工作区、打开中的富文本编辑器以及仍处于撤销窗口内的待恢复附件引用。只要附件还被其他课程、课时、知识卡片、未提交编辑或撤销记录引用，就会保留。
+- **手动清理：** 打开「偏好与数据 → 跨设备云同步 → Supabase Storage 清理」，点击「扫描未引用文件」查看当前账号对象总量、仍被引用对象和孤儿对象；确认后点击清理。清理前会重新读取引用并逐批复核，避免删除扫描后重新被引用的对象。
+- **权限和执行范围：** 只扫描当前登录用户 UUID 目录，只通过 Supabase Storage API 的 `remove()` 删除对象；不会直接删除 `storage.objects` 数据库记录，也不会扫描或清理其他用户目录。Storage 删除为永久操作。
+- **网络/同步异常：** 若用户未登录、云同步未完成、存在冲突或网络错误，自动回收会安全停止，不会强删。此类文件会留作孤儿对象，可在同步恢复后使用设置页的手动扫描清理。
+
+清理完成后，设置页会刷新 Storage 用量。容量统计和实际配额的更新时间可能不同，以 Supabase Dashboard 最终用量为准。
 
 ### Supabase 容量监控（V19 增补）
 
@@ -112,7 +122,7 @@ V19.2 曾移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 - 清除浏览器站点数据、重置工作区或使用旧备份覆盖数据前，请先导出完整工作区 JSON，或确认云端同步已经完成。
 - 网站代码仓库不包含个人知识卡片种子文件；已有知识卡片属于用户工作区数据，需通过本地存储、云同步或完整 JSON 备份保留和迁移。
 
-## 基础测试（V20.1）
+## 基础测试（V20.2）
 
 需要 Node.js 18 或更高版本，无需安装 npm 依赖：
 
@@ -120,7 +130,7 @@ V19.2 曾移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 node --test tests/*.test.cjs
 ```
 
-测试覆盖工作区 Schema、本地损坏数据恢复分支、工作区 SQL/RLS/Realtime 契约、Storage 私有 Bucket 与按用户目录授权、Base64 附件迁移、revision compare-and-swap 关键条件，以及恢复保护代码路径。它们属于本地静态/单元级检查，不替代真实 Supabase 项目的 RLS 登录态测试或多设备端到端测试。部署后可按 `supabase/tests/workspace-rls-smoke-test.sql` 对真实 Auth 用户执行 RLS 可见性检查。
+测试覆盖工作区 Schema、本地损坏数据恢复分支、工作区 SQL/RLS/Realtime 契约、Storage 私有 Bucket 与按用户目录授权、Base64 附件迁移、按用户目录递归扫描与 Storage API 删除、10 秒撤销窗口引用保护、孤儿对象清理入口、revision compare-and-swap 关键条件，以及恢复保护代码路径。它们属于本地静态/单元级检查，不替代真实 Supabase 项目的 RLS 登录态测试或多设备端到端测试。部署后可按 `supabase/tests/workspace-rls-smoke-test.sql` 对真实 Auth 用户执行 RLS 可见性检查。
 
 ## 安全与隐私
 
@@ -158,8 +168,9 @@ node --test tests/*.test.cjs
 | V19.2（解除应用层媒体大小限制） | 移除单文件、总媒体、Data URL 长度、图片像素尺寸与 JSON 备份导入的应用层固定上限；明确提示浏览器本地存储和 Supabase 数据库仍有平台配额。 |
 | V20.0 | 加入工作区严格 Schema 校验；本地 JSON 损坏时进入只读恢复保护模式并保留原始数据导出入口；恢复期间阻止本地保存和云同步；补充 Supabase 工作区建表、每用户 RLS 与 Realtime 初始化 SQL；新增 Node 内置测试及 RLS 手工烟雾测试。 |
 | V20.1 | 将登录后的富文本图片/附件上传到 Supabase Storage 私有 Bucket；数据库仅保存对象引用；按 Auth UUID 目录隔离 Storage 权限；云同步自动迁移旧 Base64 附件；使用短期 signed URL 渲染私有媒体并保留稳定路径引用。 |
+| V20.2 | 删除模块、课程、课时或知识卡片时计算被移除的媒体引用，等待 10 秒撤销期结束后自动回收未再引用的 Storage 对象；加入设置页手动扫描/清理孤儿文件；清理时复核本机、云端和待撤销引用，只处理当前用户 UUID 目录并通过 Storage API 分批删除；同时保护撤销记录和未提交编辑中的附件。 |
 
 ---
 
 **项目类型：** 静态 HTML/CSS/JavaScript 应用，无构建步骤。  
-**当前发行版本：** V20.1 · Supabase Storage Media Objects + Workspace Data Safety
+**当前发行版本：** V20.2 · Supabase Storage Orphan Cleanup + Workspace Data Safety

@@ -170,6 +170,153 @@
     mediaUrlCache.set(cacheKey, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL * 1000 });
     return data.signedUrl;
   }
+  function collectStorageMediaReferences(value, result = new Set()) {
+    if (typeof value === 'string') {
+      const pattern = /supabase-storage:\/\/knowledge-media\/([0-9a-f-]{36})\/([a-z0-9][a-z0-9._-]{0,159})/ig;
+      let match;
+      while ((match = pattern.exec(value))) {
+        if (!user || match[1].toLowerCase() !== String(user.id).toLowerCase()) continue;
+        result.add(match[1].toLowerCase() + '/' + match[2]);
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach(item => collectStorageMediaReferences(item, result));
+    } else if (value && typeof value === 'object') {
+      Object.keys(value).forEach(key => collectStorageMediaReferences(value[key], result));
+    }
+    return result;
+  }
+  function mediaReferenceToOwnedPath(reference) {
+    const match = /^supabase-storage:\/\/knowledge-media\/([0-9a-f-]{36})\/([a-z0-9][a-z0-9._-]{0,159})$/i.exec(String(reference || ''));
+    if (!match || !user || match[1].toLowerCase() !== String(user.id).toLowerCase()) return null;
+    return match[1].toLowerCase() + '/' + match[2];
+  }
+  async function getStorageCleanupContext() {
+    if (!client || !user) throw new Error('请先登录 Supabase 账号，再清理 Storage。');
+    if (!client.storage || typeof client.storage.from !== 'function') throw new Error('当前 Supabase SDK 未提供 Storage API。');
+    if (status.mode !== 'linked') throw new Error('请先完成云端首次迁移、恢复或冲突处理，并确保同步状态为“云端已连接”。');
+    if (dirty) await pushLocalNow();
+    if (status.mode !== 'linked' || dirty || pushInFlight) throw new Error('工作区尚未完成同步或存在冲突。为避免误删，请等待云同步完成后重新扫描。');
+    const row = await fetchRow();
+    if (!row) throw new Error('云端工作区不存在，已停止清理。');
+    const localState = currentState();
+    if (!localState || typeof localState !== 'object') throw new Error('无法读取当前工作区，已停止清理。');
+    const referencedPaths = collectStorageMediaReferences(localState);
+    collectStorageMediaReferences(row.state, referencedPaths);
+    // Attachments retained by the 10-second Undo snapshots are still live data:
+    // a manual cleanup must not remove them before the user can restore the item.
+    const appAdapter = app();
+    if (appAdapter && typeof appAdapter.getPendingUndoMediaReferences === 'function') {
+      const pendingUndoReferences = appAdapter.getPendingUndoMediaReferences();
+      if (Array.isArray(pendingUndoReferences)) {
+        pendingUndoReferences.forEach(reference => {
+          const path = mediaReferenceToOwnedPath(reference);
+          if (path) referencedPaths.add(path);
+        });
+      }
+    }
+    // A file can be uploaded while its rich-text form is still open and not yet
+    // persisted to the workspace. Treat editor DOM references as live as well.
+    if (appAdapter && typeof appAdapter.getActiveEditorStorageMediaReferences === 'function') {
+      const activeEditorReferences = appAdapter.getActiveEditorStorageMediaReferences();
+      if (Array.isArray(activeEditorReferences)) {
+        activeEditorReferences.forEach(reference => {
+          const path = mediaReferenceToOwnedPath(reference);
+          if (path) referencedPaths.add(path);
+        });
+      }
+    }
+    return { row, referencedPaths };
+  }
+  async function listStorageObjectsRecursive(folderPath, output = [], depth = 0) {
+    if (depth > 8) throw new Error('Storage 文件夹嵌套层级异常，已停止扫描。');
+    const limit = 100;
+    let offset = 0;
+    while (true) {
+      const { data, error } = await client.storage.from(STORAGE_BUCKET).list(folderPath, {
+        limit,
+        offset,
+        sortBy: { column: 'name', order: 'asc' }
+      });
+      if (error) throw error;
+      const entries = Array.isArray(data) ? data : [];
+      for (const entry of entries) {
+        if (!entry || typeof entry.name !== 'string' || !entry.name || entry.name === '.' || entry.name === '..') continue;
+        const fullPath = folderPath + '/' + entry.name;
+        if (!fullPath.startsWith(String(user.id).toLowerCase() + '/')) continue;
+        if (entry.id === null) {
+          await listStorageObjectsRecursive(fullPath, output, depth + 1);
+        } else {
+          output.push({ path: fullPath, size: Math.max(0, Number(entry.metadata && entry.metadata.size) || 0) });
+        }
+      }
+      if (entries.length < limit) break;
+      offset += entries.length;
+      if (offset > 200000) throw new Error('当前账号 Storage 对象数量过大，已停止扫描；请分批处理。');
+    }
+    return output;
+  }
+  async function removeOwnedStoragePaths(paths) {
+    const prefix = String(user && user.id || '').toLowerCase() + '/';
+    const unique = Array.from(new Set((paths || []).filter(path => typeof path === 'string' && path.startsWith(prefix) && !path.includes('..'))));
+    let removed = 0;
+    for (let index = 0; index < unique.length; index += 1000) {
+      const batch = unique.slice(index, index + 1000);
+      if (!batch.length) continue;
+      const { data, error } = await client.storage.from(STORAGE_BUCKET).remove(batch);
+      if (error) throw error;
+      removed += Array.isArray(data) ? data.length : batch.length;
+      batch.forEach(path => {
+        for (const key of mediaUrlCache.keys()) if (key.startsWith(path + ':')) mediaUrlCache.delete(key);
+      });
+    }
+    return removed;
+  }
+  async function scanStorageCleanup() {
+    const { referencedPaths } = await getStorageCleanupContext();
+    const objects = await listStorageObjectsRecursive(String(user.id).toLowerCase());
+    const orphaned = objects.filter(object => !referencedPaths.has(object.path));
+    return {
+      userId: user.id,
+      totalObjects: objects.length,
+      totalBytes: objects.reduce((sum, object) => sum + object.size, 0),
+      referencedObjects: objects.length - orphaned.length,
+      referencedBytes: objects.filter(object => referencedPaths.has(object.path)).reduce((sum, object) => sum + object.size, 0),
+      orphanObjects: orphaned.length,
+      orphanBytes: orphaned.reduce((sum, object) => sum + object.size, 0),
+      orphanPaths: orphaned.map(object => object.path),
+      scannedAt: new Date().toISOString()
+    };
+  }
+  async function cleanupOrphanedStorage() {
+    const report = await scanStorageCleanup();
+    let deletedObjects = 0;
+    let deletedBytes = 0;
+    const objects = await listStorageObjectsRecursive(String(user.id).toLowerCase());
+    const details = new Map(objects.map(object => [object.path, object.size]));
+    // Recheck references before every delete batch so a newly synced attachment
+    // is not removed merely because it was orphaned in an earlier scan.
+    for (let index = 0; index < report.orphanPaths.length; index += 1000) {
+      const batch = report.orphanPaths.slice(index, index + 1000);
+      const { referencedPaths } = await getStorageCleanupContext();
+      const safeBatch = batch.filter(path => !referencedPaths.has(path));
+      if (!safeBatch.length) continue;
+      const removed = await removeOwnedStoragePaths(safeBatch);
+      deletedObjects += removed;
+      deletedBytes += safeBatch.reduce((sum, path) => sum + (details.get(path) || 0), 0);
+    }
+    const remaining = await scanStorageCleanup();
+    return { ...remaining, deletedObjects, deletedBytes };
+  }
+  async function cleanupRemovedMedia(references) {
+    if (!Array.isArray(references) || !references.length) return { deletedObjects: 0 };
+    const candidates = Array.from(new Set(references.map(mediaReferenceToOwnedPath).filter(Boolean)));
+    if (!candidates.length) return { deletedObjects: 0 };
+    const { referencedPaths } = await getStorageCleanupContext();
+    const safePaths = candidates.filter(path => !referencedPaths.has(path));
+    const deletedObjects = await removeOwnedStoragePaths(safePaths);
+    return { deletedObjects, skippedReferenced: candidates.length - safePaths.length };
+  }
+
   function containsInlineMedia(value) {
     if (typeof value === 'string') return /(?:src|href)\s*=\s*["']data:[^"']+["']/i.test(value);
     if (Array.isArray(value)) return value.some(containsInlineMedia);
@@ -802,6 +949,9 @@
     getProjectUsage,
     uploadMediaFile,
     resolveMediaUrl,
+    scanStorageCleanup,
+    cleanupOrphanedStorage,
+    cleanupRemovedMedia,
     onLocalSave,
     reinitialise: initialiseFromConfig
   };
