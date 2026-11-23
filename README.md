@@ -1,6 +1,6 @@
 # 嵌入式学习站 · Embedded Learning Station
 
-**当前网站版本：V20；Obsidian 插件版本：1.0.3（重复 ID 诊断、隐藏点号文件迁移与路径保护）**
+**当前版本：V18（同步期间保持当前页面版）**
 
 一个无需构建步骤的中文嵌入式学习工作台，可直接部署到 GitHub Pages。网站使用原生 HTML、CSS 和 JavaScript；本地数据保存在浏览器中，可选接入 Supabase Auth 与 PostgreSQL 实现跨设备同步。
 
@@ -15,7 +15,6 @@
 - **阅读体验**：知识卡片阅读宽度可调节，支持 1px 精度、流畅拖动和本地记忆；富文本弹窗采用统一布局。
 - **数据管理**：支持完整工作区 JSON 导出和导入。
 - **可选云同步**：接入 Supabase 后支持账号登录、跨设备同步及冲突处理。
-- **Obsidian 双向联动**：配套 Obsidian 插件同步知识库、学习记录、课程/课时笔记、学习进度和资源收藏；支持电脑与手机端、Markdown 编辑、自动同步及冲突副本。
 
 ## 发布到 GitHub Pages
 
@@ -30,7 +29,6 @@
 | `sync-client.js` | Supabase 登录、云端保存/恢复和冲突处理 |
 | `.nojekyll` | GitHub Pages 静态文件发布标记 |
 | `README.md` | 使用说明与版本迭代记录 |
-| `obsidian-plugin/` | Obsidian 手机/桌面双向同步插件（含 `main.js`、`manifest.json`、`styles.css` 和安装说明） |
 
 部署步骤：
 
@@ -56,64 +54,9 @@ python -m http.server 8000
 3. 在网站「偏好与数据 → 跨设备云同步 → Supabase 连接配置」中填写 URL 和 key，保存并登录。
 4. 首次迁移本机数据或恢复云端数据时，按页面提示明确选择操作；覆盖数据前建议先导出 JSON 备份。
 
-**本精简发行包不包含 Supabase 数据库初始化 SQL、RLS 测试文件或测试目录。** 当前已初始化的 Supabase 项目不受影响；V20 不需要修改数据库表结构或 RLS 策略。若要接入全新的 Supabase 项目，需要从你自己的安全备份或既有数据库维护资料中恢复相应的表结构与 RLS 策略。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
+**本精简发行包不包含 Supabase 数据库初始化 SQL、RLS 测试文件或测试目录。** 当前已初始化的 Supabase 项目不受影响；V18 不需要修改数据库表结构或 RLS 策略。若要接入全新的 Supabase 项目，需要从你自己的安全备份或既有数据库维护资料中恢复相应的表结构与 RLS 策略。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
 
 如需让新设备自动获得连接地址，可在部署前将默认 Project URL 和公开 publishable key 填入 `sync-config.js`。若留空，则每台设备都可以在网站设置页单独配置。
-
-
-## Obsidian 双向自动同步（V20）
-
-V20 提供配套 Obsidian 插件（当前采用手动安装发行），复用当前 Supabase 工作区表 `embedded_learning_workspaces`，无需新建数据表或修改现有 RLS 策略。插件使用 Obsidian Vault API 读写 Markdown，并使用 Obsidian `requestUrl` 访问 Supabase；没有使用 Node.js 文件系统或 Electron API，目标是同时支持 Obsidian 桌面端和手机端。
-
-### 同步范围
-
-| 学习网站数据 | Obsidian 目录 | 双向行为 |
-|---|---|---|
-| 知识库 | `Embedded Learning Hub/知识库/` | 新增、修改、删除知识卡片 |
-| 学习记录 | `Embedded Learning Hub/学习记录/` | 同步日期、时长、分类、正文和下一步 |
-| 课程与课时笔记 | `Embedded Learning Hub/课程笔记/` | 同步课程描述、阶段名称与目标、课时正文、时长、自测字段和完成状态 |
-| 资源收藏 | `Embedded Learning Hub/资源/` | 同步名称、链接、分类、标签和描述 |
-
-每条内容使用稳定 `elh_id` 标识，避免标题改动后重复创建。富文本首次导出为 Markdown 时，插件在隐藏 HTML 注释中保留原始 HTML；没有编辑正文时可原样恢复，编辑正文后则将 Markdown 转换为网站可保存的 HTML。复杂富文本在 Markdown 编辑后可能需要在 Obsidian 中重新排版。
-
-在 Obsidian 命令面板中可执行「新建同步知识卡片」「新建同步学习记录」「新建同步资源收藏」「新建同步课程笔记」；「在现有课程中新建同步课时笔记」会先读取课程清单再选择所属课程。资源笔记需填写有效的 `http://` 或 `https://` 链接。同步对象是 Markdown 内容和工作区元数据；Vault 中独立存放的图片/PDF 附件文件不会作为二进制附件单独上传。
-
-### 首次启用顺序
-
-1. 将网站工程 V20 部署到 GitHub Pages，保留现有 Supabase URL、公开 publishable/anon key 和账号。
-2. 在电脑端登录学习网站，确认 Supabase 云同步状态显示已连接，并等待一次同步完成。V20 会将内置课程与课时目录写入现有云端工作区，供 Obsidian 首次生成完整课程笔记。
-3. 将 `obsidian-plugin` 文件夹中的 `main.js`、`manifest.json`、`styles.css`（插件版本 1.0.3）复制到 Vault 的 `.obsidian/plugins/embedded-learning-hub-sync/` 目录（也可使用独立插件 ZIP 解压到该目录）。升级时请覆盖这三个程序文件，但保留插件设置/数据。
-4. 在电脑和手机各自的 Vault 中安装同一份插件文件，并在 Obsidian → 设置 → 第三方插件中分别启用 **Embedded Learning Hub Sync**。不需要购买或启用 Obsidian Sync。
-5. 打开两台设备的插件设置，分别填写与网站相同的 Supabase Project URL 和公开 publishable/anon key，再使用网站已有邮箱和密码登录。
-6. 点击「现在同步」。首次同步会在 `Embedded Learning Hub/` 下生成知识库、学习记录、课程笔记和资源文件夹。
-
-### 电脑与手机
-
-- 插件没有使用 Node.js `fs`、Electron 或桌面专属文件 API，手机端通过 Obsidian Vault API 读写 Vault。
-- 自动同步包括启动、笔记变更后的防抖同步、网络恢复、应用回到前台，以及应用前台时的定时检查。手机应用进入后台后不保证持续运行；重新打开 Obsidian 或回到前台时会检查云端。
-- 学习内容只通过现有 Supabase 在网站与 Obsidian 之间同步；插件程序本身需要在电脑和手机各自安装一次。不需要 Obsidian Sync，也不需要其他付费同步订阅。
-- 将插件文件夹 `embedded-learning-hub-sync/` 分别复制到每台设备 Vault 的 `.obsidian/plugins/` 目录并启用。若以后将插件发布到公开 GitHub 仓库，可用免费的 BRAT 插件分发更新；当前 ZIP 不会自动安装或自动发布到 BRAT。
-- 不要再用其他网盘/文件同步工具同时同步 `Embedded Learning Hub/` 内容目录，以免与本插件的 Supabase 同步并发写入。插件的 Supabase 登录会话保存在每台设备自己的本地存储中，设备需要分别登录。iOS 上访问隐藏的 `.obsidian/plugins/` 配置目录可能受系统文件管理限制。
-
-### 重复同步 ID 诊断与安全整理（插件 1.0.2）
-
-如果 Obsidian 提示「发现重复的同步 ID」，可在插件设置中点击「扫描并整理」，或在命令面板执行「检查和整理重复同步 ID」。诊断面板会列出该 ID 对应的全部文件路径，显示内容是否完全一致，并提供逐份预览和打开操作。选择要保留的正式同步笔记后，其他副本会原样移动到同步根目录之外的 `重复ID备份` 文件夹，不会被删除。内容不同的笔记不会自动合并，必须由用户选择保留版本。移动前会再次核验 `elh_type` 和 `elh_id`，如果文件身份已变化则停止整理。整理完所有重复组后，再执行「现在同步」。
-
-
-### 点号开头标题兼容（插件 1.0.3）
-
-V1.0.2 及更早版本会直接将标题写入 Markdown 文件名。当课程或课时标题以句点开头（例如 `.data复制、.bss清零与C对象初值`）时，生成的文件名也以句点开头，Obsidian 默认将其作为隐藏文件；部分 Vault API 查询无法索引该路径，导致插件重复创建并最终报告路径冲突。V1.0.3 会给点号开头的文件名/目录名添加 `笔记-` 前缀，但 frontmatter 的原始标题与正文不变。首次同步还会通过 `vault.adapter` 检查并恢复旧版隐藏笔记，将其原样移动到 Vault 根目录旁的 `点号文件备份` 文件夹；如果旧隐藏笔记与可见版本不同，会先生成冲突副本，不静默覆盖。
-
-### 冲突与删除
-
-插件以云端 revision 做乐观并发控制。同一条笔记只在一端修改时自动合并；如果网站与 Obsidian 同时修改同一条内容，插件不会静默覆盖，而是在 `Embedded Learning Hub/_同步冲突/` 生成包含本机版本和云端版本的冲突副本，并以云端版本恢复原同步笔记。请比较两份内容，将需要保留的段落合并到原同步笔记后再次同步。删除同步笔记会同步删除对应学习条目；删除课程或课时会影响网站学习地图，建议先备份完整工作区 JSON。
-
-### 安全说明
-
-- 插件只使用 Supabase 公开 publishable/anon key 和当前用户会话，遵循现有 RLS；不要填写 `service_role` 或 `sb_secret_...`。
-- 邮箱密码只用于登录，不会保存；刷新令牌保存在各设备的本地存储中。
-- 只同步配置根目录下带有 `elh_type` 属性的 Markdown 文件；其他 Vault 笔记不会上传。
-- 当前 Obsidian 插件 1.0.3 为手动安装发行版，尚未发布到 Obsidian 社区插件目录；电脑和手机需分别安装。
 
 ## 数据保存与备份
 
@@ -154,10 +97,8 @@ V1.0.2 及更早版本会直接将标题写入 Markdown 文件名。当课程或
 | V16 | 生产工程精简：移除测试脚本、数据库 SQL/测试目录、历史截图、旧版报告和冗余代码快照；统一使用本 README 记录版本历史。 |
 | V17 | 修复手机与电脑多端同步回声：远端应用写入不再触发本地上传；工作区指纹采用稳定序列化；相同内容的新 revision 只确认版本、不重复弹窗；Realtime 订阅按账号复用，避免反复重连和重复事件。 |
 | V18 | 修复接收端同步时被强制带回首页的问题；保留当前页面、学习地图中的课程/课时位置、筛选与滚动位置；有未提交表单或正在编辑时不重绘界面，避免同步刷新覆盖输入中的内容。 |
-| V19 | 增加 Obsidian 桌面/手机双向同步插件；将内置课程目录快照纳入云工作区；按稳定 ID 同步知识库、学习记录、课程/课时笔记、完成状态和资源；加入并发版本检测与冲突副本。 |
-| V20 | 修复 Obsidian 首次同步或目录冲突时的 `File already exists` 错误；写入前核对 `elh_type`/`elh_id`，路径被文件或文件夹占用时使用稳定 ID 备用路径，不覆盖无关文件；完善错误路径提示；更新免费手动安装说明，不依赖 Obsidian Sync。 |
 
 ---
 
 **项目类型：** 静态 HTML/CSS/JavaScript 应用，无构建步骤。  
-**当前网站发行版本：** V20；**Obsidian 插件发行版本：** 1.0.3 · Dotfile Path Compatibility Fix
+**当前发行版本：** V18 · Keep Current Page During Sync

@@ -1,9 +1,0 @@
-{
-  "id": "embedded-learning-hub-sync",
-  "name": "Embedded Learning Hub Sync",
-  "version": "1.0.3",
-  "minAppVersion": "1.5.0",
-  "description": "双向同步嵌入式学习站，支持重复 ID 诊断、安全归档及点号隐藏笔记兼容迁移。",
-  "author": "Embedded Learning Hub",
-  "isDesktopOnly": false
-}

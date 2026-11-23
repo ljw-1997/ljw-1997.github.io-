@@ -39,7 +39,6 @@
   };
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
-  function withoutObsidianCatalog(value) { const copy = clone(value); if (copy && typeof copy === 'object') delete copy.obsidianCatalog; return copy; }
   function app() { return window.EmbeddedLearningApp || null; }
   function currentState() { const a = app(); return a ? a.getState() : null; }
   function toast(message) { const a = app(); if (a && a.notify) a.notify(message); else console.info('[EmbeddedSync]', message); }
@@ -148,11 +147,7 @@
     // Treat that normalised local snapshot as the acknowledged remote state so that
     // applying a remote update never immediately echoes the same data back to cloud.
     const appliedSnapshot = getAppStateOrThrow();
-    // V19 adds a derived course/lesson index for Obsidian. If an older V18 row
-    // (or a stale index from another device) is received, acknowledge the actual
-    // cloud payload first so setLinked schedules one safe migration upload.
-    const catalogChanged = fingerprint(appliedSnapshot.obsidianCatalog || null) !== fingerprint(row.state.obsidianCatalog || null);
-    setLinked(row, catalogChanged ? row.state : appliedSnapshot);
+    setLinked(row, appliedSnapshot);
     if (message && lastRemoteNoticeKey !== noticeKey) {
       lastRemoteNoticeKey = noticeKey;
       toast(message);
@@ -289,12 +284,8 @@
         return;
       }
       const matchesLastSynced = localFp === meta.fingerprint;
-      // V19 derives an Obsidian course index from the built-in curriculum. That
-      // computed field is new metadata, not a user's offline edit. Ignore only
-      // this field when comparing against a V18 sync fingerprint.
-      const matchesLastSyncedIgnoringCatalog = fingerprint(withoutObsidianCatalog(local)) === meta.fingerprint;
       if (row.revision > Number(meta.revision || 0)) {
-        if (matchesLastSynced || matchesLastSyncedIgnoringCatalog) {
+        if (matchesLastSynced) {
           applyRemote(row, '已同步其他设备上的最新数据。');
         } else {
           showConflict(row, '本机与云端在上次同步后都发生了修改。为避免丢失数据，请选择保留哪个版本。');
@@ -309,9 +300,6 @@
       status.updatedAt = row.updated_at;
       if (matchesLastSynced) {
         setLinked(row, local);
-      } else if (matchesLastSyncedIgnoringCatalog) {
-        // Persist the new Obsidian index without treating it as a user conflict.
-        setLinked(row, row.state);
       } else {
         dirty = true;
         status.hasLocalChanges = true;
