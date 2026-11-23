@@ -1,4 +1,4 @@
--- Supabase project usage monitor for Embedded Learning Hub.
+-- Supabase project usage monitor for My Learning Hub.
 -- Run this once in Supabase Dashboard -> SQL Editor as a database owner.
 -- The function is intentionally executable only by service_role and runs with
 -- the caller's privileges; the browser calls an authenticated Edge Function.

@@ -149,9 +149,62 @@
     if (error) throw error;
     return 'supabase-storage://' + STORAGE_BUCKET + '/' + (data && data.path ? data.path : path);
   }
-  async function uploadMediaFile(file, contentType) {
+  async function uploadMediaFile(file, contentType, options = {}) {
     if (!file || typeof file !== 'object') throw new Error('没有选择有效的附件文件。');
-    return uploadBlobToStorage(file, contentType || file.type || 'application/octet-stream', file.name || 'attachment.bin');
+    if (!client || !user) throw new Error('请先登录 Supabase 账号，再将图片或附件上传到 Storage。');
+    const config = readConfig();
+    const { data: sessionData, error: sessionError } = await client.auth.getSession();
+    if (sessionError) throw sessionError;
+    const session = sessionData && sessionData.session;
+    if (!session || !session.access_token || !session.user || String(session.user.id).toLowerCase() !== String(user.id).toLowerCase()) {
+      throw new Error('登录状态已失效，请重新登录后上传附件。');
+    }
+    const safeMime = String(contentType || file.type || 'application/octet-stream').toLowerCase().split(';')[0].trim();
+    const path = String(user.id).toLowerCase() + '/' + makeMediaId() + '.' + extensionForMime(safeMime, file.name || 'attachment.bin');
+    const encodedPath = path.split('/').map(segment => encodeURIComponent(segment)).join('/');
+    const endpoint = config.url.replace(/\/+$/, '') + '/storage/v1/object/' + encodeURIComponent(STORAGE_BUCKET) + '/' + encodedPath;
+    const onProgress = options && typeof options.onProgress === 'function' ? options.onProgress : null;
+
+    // Supabase's standard SDK upload method does not expose byte-level progress.
+    // Use the same authenticated Storage REST upload endpoint through XHR so the
+    // browser can report actual transmitted bytes without exposing a privileged key.
+    if (typeof XMLHttpRequest === 'undefined') {
+      const result = await client.storage.from(STORAGE_BUCKET).upload(path, file, {
+        cacheControl: '3600', contentType: safeMime, upsert: false
+      });
+      if (result.error) throw result.error;
+      if (onProgress) onProgress(100);
+      return 'supabase-storage://' + STORAGE_BUCKET + '/' + (result.data && result.data.path ? result.data.path : path);
+    }
+
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', endpoint, true);
+      xhr.setRequestHeader('apikey', config.publishableKey);
+      xhr.setRequestHeader('Authorization', 'Bearer ' + session.access_token);
+      xhr.setRequestHeader('Content-Type', safeMime);
+      xhr.setRequestHeader('cache-control', 'max-age=3600');
+      xhr.setRequestHeader('x-upsert', 'false');
+      xhr.upload.addEventListener('progress', event => {
+        if (!onProgress) return;
+        onProgress(event.lengthComputable && event.total > 0 ? Math.min(99, event.loaded / event.total * 100) : null);
+      });
+      xhr.onload = () => {
+        let payload = null;
+        try { payload = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (onProgress) onProgress(100);
+          resolve();
+          return;
+        }
+        const message = payload && (payload.message || payload.error_description || payload.error) || ('Storage 上传失败（HTTP ' + xhr.status + '）。');
+        reject(new Error(String(message)));
+      };
+      xhr.onerror = () => reject(new Error('网络连接中断，Storage 上传未完成。'));
+      xhr.onabort = () => reject(new Error('上传已取消。'));
+      xhr.send(file);
+    });
+    return 'supabase-storage://' + STORAGE_BUCKET + '/' + path;
   }
   async function resolveMediaUrl(reference, forceDownload, downloadName, forceRefresh) {
     if (!client || !user) throw new Error('请登录 Supabase 账号后查看私有附件。');

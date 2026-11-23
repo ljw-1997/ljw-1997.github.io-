@@ -1,4 +1,4 @@
--- Embedded Learning Hub workspace table, RLS policies and Realtime publication.
+-- My Learning Hub workspace table, RLS policies and Realtime publication.
 -- Run once in Supabase Dashboard -> SQL Editor as a database owner.
 -- Safe to re-run: table/policies/publication membership are guarded or replaced.
 
@@ -125,7 +125,7 @@ end
 $migration$;
 
 comment on table public.embedded_learning_workspaces is
-  'One versioned JSON workspace per Supabase Auth user for Embedded Learning Hub.';
+  'One versioned JSON workspace per Supabase Auth user for My Learning Hub.';
 comment on column public.embedded_learning_workspaces.state is
   'Complete user workspace JSON. The client validates its shape before applying it.';
 comment on column public.embedded_learning_workspaces.revision is

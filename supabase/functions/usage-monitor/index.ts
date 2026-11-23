@@ -1,4 +1,4 @@
-// Project capacity endpoint for Embedded Learning Hub.
+// Project capacity endpoint for My Learning Hub.
 // Only signed-in Auth users on the explicit UUID allowlist can read project-wide usage.
 // @supabase/server keeps the secret key and admin client on the server.
 import { withSupabase } from "npm:@supabase/server@1";

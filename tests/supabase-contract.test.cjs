@@ -68,7 +68,7 @@ test('browser sync uploads and signs private Storage media, then migrates legacy
   assert.match(sync, /supabase-storage:\/\/' \+ STORAGE_BUCKET/);
   assert.match(app, /supabase-storage:\\\/\\\/knowledge-media/);
   assert.match(app, /data-storage-ref/);
-  assert.match(app, /uploadMediaFile\(file,mime\)/);
+  assert.match(app, /uploadMediaFile\(file,mime,\{/);
 });
 
 test('Storage cleanup scans only the authenticated user tree and deletes through the Storage API', () => {
@@ -96,4 +96,26 @@ test('module deletion keeps attachments during undo and reclaims only after undo
   assert.match(app, /getPendingUndoMediaReferences:\(\)=>Array\.from\(new Set\(pendingDeleteUndos\.flatMap/);
   assert.match(app, /getActiveEditorStorageMediaReferences:\(\)=>\{const refs=new Set\(\);document\.querySelectorAll/);
   assert.match(sync, /pendingUndoReferences\.forEach\(reference =>/);
+});
+
+
+test('V20.3 rich-media uploads expose live byte progress and accessible status UI', () => {
+  assert.match(sync, /client\.auth\.getSession\(\)/);
+  assert.match(sync, /xhr\.upload\.addEventListener\('progress'/);
+  assert.match(sync, /onProgress\(event\.lengthComputable/);
+  assert.match(sync, /Authorization', 'Bearer ' \+ session\.access_token/);
+  assert.match(app, /data-rich-upload-status/);
+  assert.match(app, /role="progressbar" aria-label="附件上传进度"/);
+  assert.match(app, /onProgress:progress=>setRichUploadProgress/);
+  assert.match(app, /finishRichUploadProgress\(wrap,'error'/);
+  assert.match(app, /正在读取到本机/);
+});
+
+test('V20.3 public site branding is renamed to 我的学习站', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.match(html, /<title>我的学习站 · 学习工作台<\/title>/);
+  assert.match(html, /aria-label="我的学习站"/);
+  assert.match(html, /<div class="brand-title">我的学习站<\/div>/);
+  assert.match(html, /<span>我的学习站<\/span>/);
+  assert.doesNotMatch(html, /嵌入式学习站|EMBEDDED LEARNING STATION/);
 });

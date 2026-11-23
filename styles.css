@@ -1963,3 +1963,29 @@ input::placeholder,textarea::placeholder{color:#849187;opacity:1}
 .recovery-import-label input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 .workspace-recovery .workspace-recovery-help{margin-top:20px;padding-top:15px;border-top:1px solid #eee9e2;font-size:11px;color:#8a7a68}
 @media(max-width:620px){.workspace-recovery{margin:18px auto;padding:20px;border-radius:15px}.workspace-recovery-actions{display:grid}.workspace-recovery-actions .btn,.recovery-import-label{width:100%;justify-content:center}}
+
+/* V20.3: compact, accessible upload feedback for rich-media attachments. */
+.rich-upload-progress{margin:0 14px 12px;padding:11px 12px 10px;border:1px solid #e4ece1;border-radius:11px;background:linear-gradient(180deg,#fcfefc,#f7faf6);box-shadow:0 2px 8px rgba(36,65,42,.035);}
+.rich-upload-progress[hidden]{display:none!important}
+.rich-upload-progress-head{display:flex;align-items:center;gap:9px;min-width:0;margin-bottom:8px}
+.rich-upload-status-mark{position:relative;display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:7px;background:#e8f2e5;color:#47734b}
+.rich-upload-status-mark:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.rich-upload-progress-copy{display:grid;gap:1px;min-width:0;flex:1}
+.rich-upload-progress-copy strong{overflow:hidden;color:#435d47;font-size:11px;font-weight:750;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}
+.rich-upload-progress-copy small{overflow:hidden;color:#8a988b;font-size:9px;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}
+.rich-upload-progress-value{flex:none;color:#58765b;font-size:10px;font-weight:800;font-variant-numeric:tabular-nums}
+.rich-upload-progress-track{height:4px;overflow:hidden;border-radius:99px;background:#e7eee5}
+.rich-upload-progress-track>span{display:block;width:0;height:100%;border-radius:inherit;background:linear-gradient(90deg,#8fb98c,#477d52);transition:width .16s ease;will-change:width}
+.rich-upload-progress[data-state="uploading"] .rich-upload-status-mark{background:#edf4ea;color:#5a895c}
+.rich-upload-progress[data-state="uploading"] .rich-upload-status-mark:before{animation:rich-upload-pulse 1.2s ease-in-out infinite}
+.rich-upload-progress[data-state="success"] .rich-upload-status-mark{background:#e5f2e5;color:#397348}
+.rich-upload-progress[data-state="success"] .rich-upload-status-mark:before{width:9px;height:5px;border-radius:0;border-left:2px solid currentColor;border-bottom:2px solid currentColor;background:transparent;transform:rotate(-45deg) translate(1px,-1px)}
+.rich-upload-progress[data-state="error"]{border-color:#f0dfdb;background:#fffaf9}
+.rich-upload-progress[data-state="error"] .rich-upload-status-mark{background:#fbe9e6;color:#b64c42}
+.rich-upload-progress[data-state="error"] .rich-upload-progress-copy strong,.rich-upload-progress[data-state="error"] .rich-upload-progress-value{color:#a64b43}
+.rich-upload-progress[data-state="error"] .rich-upload-progress-track>span{background:linear-gradient(90deg,#e8a49a,#c95d51)}
+.rich-upload-progress.is-indeterminate .rich-upload-progress-track>span{width:32%;animation:rich-upload-indeterminate 1.35s ease-in-out infinite}
+@keyframes rich-upload-pulse{0%,100%{transform:scale(.86);opacity:.55}50%{transform:scale(1.12);opacity:1}}
+@keyframes rich-upload-indeterminate{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}
+@media(max-width:740px){.rich-upload-progress{margin:0 8px 9px;padding:9px 10px}.rich-upload-progress-head{gap:7px;margin-bottom:7px}}
+@media(prefers-reduced-motion:reduce){.rich-upload-progress-track>span,.rich-upload-progress[data-state="uploading"] .rich-upload-status-mark:before{animation:none!important;transition:none}}

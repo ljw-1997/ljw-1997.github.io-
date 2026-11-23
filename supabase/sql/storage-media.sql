@@ -1,4 +1,4 @@
--- Private Supabase Storage bucket for Embedded Learning Hub rich-media assets.
+-- Private Supabase Storage bucket for My Learning Hub rich-media assets.
 -- Run once in Supabase Dashboard -> SQL Editor as a database owner.
 -- Safe to re-run. Each Auth user may manage only objects in their own UUID folder.
 

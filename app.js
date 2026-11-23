@@ -2819,6 +2819,25 @@ function normalizeRichDataUrlMime(dataUrl,mime){
  return String(dataUrl||'').replace(/^data:[^;,]+;base64,/i,`data:${mime};base64,`);
 }
 function richAttachmentHtml(dataUrl,file){const mime=String(file?.type||'application/octet-stream').replace(/[^a-zA-Z0-9!#$&^_.+\/-]/g,'')||'application/octet-stream';const safeName=String(file?.name||'附件').replace(/[\\/:*?"<>|]/g,'_').slice(0,180)||'附件';return `<a class="rich-attachment" href="${esc(dataUrl)}" download="${esc(safeName)}" title="下载附件：${esc(safeName)}" contenteditable="false">${icon('paperclip',13)} <strong>${esc(safeName)}</strong><span>下载</span></a>`;}
+function setRichUploadProgress(wrap,phase,percent,fileName,detail){
+ const panel=wrap?.querySelector('[data-rich-upload-status]');if(!panel)return;
+ if(wrap._richUploadHideTimer){clearTimeout(wrap._richUploadHideTimer);wrap._richUploadHideTimer=null;}
+ panel.hidden=false;panel.dataset.state=phase;
+ const message=panel.querySelector('[data-rich-upload-message]');const file=panel.querySelector('[data-rich-upload-file]');const value=panel.querySelector('[data-rich-upload-percent]');const track=panel.querySelector('[role="progressbar"]');const bar=panel.querySelector('[data-rich-upload-bar]');
+ if(message)message.textContent=detail||({uploading:'正在上传',success:'已完成',error:'上传失败'}[phase]||'处理中');
+ if(file)file.textContent=fileName||'';
+ const known=Number.isFinite(percent);const shown=known?Math.max(0,Math.min(100,Math.round(percent))):null;
+ if(value)value.textContent=known?shown+'%':'…';
+ if(bar)bar.style.width=known?shown+'%':'32%';
+ if(track){track.setAttribute('aria-valuenow',known?String(shown):'0');track.setAttribute('aria-valuetext',known?shown+'%':(detail||'正在上传'));}
+ panel.classList.toggle('is-indeterminate',!known);
+ wrap.querySelectorAll('[data-rich-insert]').forEach(button=>{button.disabled=phase==='uploading';});
+}
+function finishRichUploadProgress(wrap,phase,fileName,detail){
+ setRichUploadProgress(wrap,phase,100,fileName,detail);
+ const panel=wrap?.querySelector('[data-rich-upload-status]');
+ if(wrap&&panel)wrap._richUploadHideTimer=setTimeout(()=>{if(panel.dataset.state===phase)panel.hidden=true;wrap._richUploadHideTimer=null;},phase==='error'?5200:2400);
+}
 function insertRichMediaFile(input,file){
  const wrap=input.closest('.rich-editor-shell');const editor=wrap?.querySelector('[data-rich-editor]');if(!editor||!file)return;
  const kind=input.dataset.richFileInput;input.value='';
@@ -2828,11 +2847,12 @@ function insertRichMediaFile(input,file){
  const attachmentMimes=new Set(['application/pdf','text/plain','text/csv','text/markdown','application/json','application/zip','application/x-zip-compressed','application/x-zip','multipart/x-zip','application/gzip','application/octet-stream','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.presentationml.presentation','application/msword','application/vnd.ms-excel','application/vnd.ms-powerpoint',...rasterMimes]);
  if(kind==='image'&&!rasterMimes.has(mime)){showToast('请选择 PNG、JPEG、GIF、WebP、AVIF 或 BMP 图片；SVG 等主动内容不作为图片内嵌。');return;}
  if(kind!=='image'&&!attachmentMimes.has(mime)){showToast('该文件类型不支持内嵌。支持 PDF、文本/CSV/Markdown、JSON、ZIP、Office 文档和常见位图；HTML、SVG 与脚本文件请勿作为附件插入。');return;}
+ setRichUploadProgress(wrap,'uploading',0,file.name||'未命名文件','准备上传');
  const insertReference=(mediaRef,previewUrl,releasePreview)=>{
-  if(kind!=='image'){replaceSelectionWithHtml(editor,richAttachmentHtml(mediaRef,file));rememberRichEditorSelection();showToast('附件已上传并插入 Supabase Storage；数据库仅保存对象引用。');return;}
+  if(kind!=='image'){replaceSelectionWithHtml(editor,richAttachmentHtml(mediaRef,file));rememberRichEditorSelection();finishRichUploadProgress(wrap,'success',file.name||'附件','上传完成，已插入正文');showToast('附件已上传并插入 Supabase Storage；数据库仅保存对象引用。');return;}
   const preview=new Image();
-  preview.onerror=()=>{if(releasePreview)URL.revokeObjectURL(previewUrl);replaceSelectionWithHtml(editor,richAttachmentHtml(mediaRef,file));rememberRichEditorSelection();showToast('当前浏览器无法直接预览该图片格式，已将 Storage 文件作为附件插入，可下载后用本地应用打开。');};
-  preview.onload=()=>{const naturalW=preview.naturalWidth||480,naturalH=preview.naturalHeight||320;const width=Math.max(100,Math.min(640,naturalW));const height=Math.max(70,Math.round(width*naturalH/naturalW));const safeName=esc(file.name||'插入图片');const html=`<span class="rich-image-frame" contenteditable="false" style="display:inline-block;width:${width}px;height:${height}px;max-width:100%;resize:both;overflow:hidden;vertical-align:middle;box-sizing:border-box"><img src="${esc(mediaRef)}" alt="${safeName}" title="${safeName}" style="width:100%;height:100%;object-fit:contain;display:block;max-width:100%"></span>`;replaceSelectionWithHtml(editor,html);rememberRichEditorSelection();if(releasePreview)URL.revokeObjectURL(previewUrl);showToast(mediaRef.startsWith('supabase-storage://')?'图片已上传 Supabase Storage 并插入；可拖动右下角手柄调整尺寸，点击图片放大。':'图片已插入；可拖动右下角手柄调整尺寸，点击图片放大。');};
+  preview.onerror=()=>{if(releasePreview)URL.revokeObjectURL(previewUrl);replaceSelectionWithHtml(editor,richAttachmentHtml(mediaRef,file));rememberRichEditorSelection();finishRichUploadProgress(wrap,'success',file.name||'图片','图片已上传，已作为附件插入');showToast('当前浏览器无法直接预览该图片格式，已将 Storage 文件作为附件插入，可下载后用本地应用打开。');};
+  preview.onload=()=>{const naturalW=preview.naturalWidth||480,naturalH=preview.naturalHeight||320;const width=Math.max(100,Math.min(640,naturalW));const height=Math.max(70,Math.round(width*naturalH/naturalW));const safeName=esc(file.name||'插入图片');const html=`<span class="rich-image-frame" contenteditable="false" style="display:inline-block;width:${width}px;height:${height}px;max-width:100%;resize:both;overflow:hidden;vertical-align:middle;box-sizing:border-box"><img src="${esc(mediaRef)}" alt="${safeName}" title="${safeName}" style="width:100%;height:100%;object-fit:contain;display:block;max-width:100%"></span>`;replaceSelectionWithHtml(editor,html);rememberRichEditorSelection();if(releasePreview)URL.revokeObjectURL(previewUrl);finishRichUploadProgress(wrap,'success',file.name||'图片','图片已上传并插入正文');showToast(mediaRef.startsWith('supabase-storage://')?'图片已上传 Supabase Storage 并插入；可拖动右下角手柄调整尺寸，点击图片放大。':'图片已插入；可拖动右下角手柄调整尺寸，点击图片放大。');};
   preview.src=previewUrl;
  };
  const syncApi=window.EmbeddedSync;const syncStatus=syncApi&&typeof syncApi.getStatus==='function'?syncApi.getStatus():null;
@@ -2840,15 +2860,16 @@ function insertRichMediaFile(input,file){
  // fall back to a Base64 workspace write on a Storage failure.
  if(syncStatus&&syncStatus.user&&syncApi&&typeof syncApi.uploadMediaFile==='function'){
   input.disabled=true;
-  syncApi.uploadMediaFile(file,mime).then(storageRef=>{
+  syncApi.uploadMediaFile(file,mime,{onProgress:progress=>setRichUploadProgress(wrap,'uploading',progress,file.name||'附件','正在上传到云端')}).then(storageRef=>{
+   setRichUploadProgress(wrap,'uploading',100,file.name||'附件','上传完成，正在插入正文');
    if(kind==='image'){const previewUrl=URL.createObjectURL(file);insertReference(storageRef,previewUrl,true);}
    else insertReference(storageRef,'',false);
-  }).catch(error=>showToast('Supabase Storage 上传失败，附件未插入：'+String(error&&error.message||error||'请检查 Storage Bucket 与 RLS 策略。'))).finally(()=>{input.disabled=false;});
+  }).catch(error=>{finishRichUploadProgress(wrap,'error',file.name||'附件','上传失败，请检查网络或稍后重试');showToast('Supabase Storage 上传失败，附件未插入：'+String(error&&error.message||error||'请检查 Storage Bucket 与 RLS 策略。'));}).finally(()=>{input.disabled=false;});
   return;
  }
  // Offline/local-first mode remains available. These legacy Data URLs are migrated
  // to Storage before any workspace state is written to Supabase.
- const reader=new FileReader();reader.onerror=()=>showToast('读取文件失败，请重试。');reader.onload=()=>{const rawDataUrl=String(reader.result||'');if(!rawDataUrl.startsWith('data:')){showToast('文件格式读取失败。');return;}const dataUrl=kind==='image'?rawDataUrl:normalizeRichDataUrlMime(rawDataUrl,mime);if(kind==='image')insertReference(dataUrl,dataUrl,false);else{replaceSelectionWithHtml(editor,richAttachmentHtml(dataUrl,file));rememberRichEditorSelection();showToast('附件已插入本机工作区；登录云同步后会自动迁移到 Supabase Storage。');}};reader.readAsDataURL(file);
+ const reader=new FileReader();reader.onerror=()=>{finishRichUploadProgress(wrap,'error',file.name||'文件','读取失败，请重新选择文件');showToast('读取文件失败，请重试。');};reader.onprogress=e=>{if(e.lengthComputable)setRichUploadProgress(wrap,'uploading',e.total?e.loaded/e.total*100:null,file.name||'文件','正在读取到本机');};reader.onload=()=>{const rawDataUrl=String(reader.result||'');if(!rawDataUrl.startsWith('data:')){finishRichUploadProgress(wrap,'error',file.name||'文件','文件读取失败');showToast('文件格式读取失败。');return;}const dataUrl=kind==='image'?rawDataUrl:normalizeRichDataUrlMime(rawDataUrl,mime);if(kind==='image')insertReference(dataUrl,dataUrl,false);else{replaceSelectionWithHtml(editor,richAttachmentHtml(dataUrl,file));rememberRichEditorSelection();finishRichUploadProgress(wrap,'success',file.name||'附件','已保存在当前浏览器');showToast('附件已插入本机工作区；登录云同步后会自动迁移到 Supabase Storage。');}};reader.readAsDataURL(file);
 }
 function renderRichNoteEditor(content='',config={}){
  const html=knowledgeEditorHtml(content);
@@ -2899,11 +2920,15 @@ function renderRichNoteEditor(content='',config={}){
     </div>
    </div>
   </div>
+  <div class="rich-upload-progress" data-rich-upload-status hidden aria-live="polite">
+   <div class="rich-upload-progress-head"><span class="rich-upload-status-mark" aria-hidden="true"></span><div class="rich-upload-progress-copy"><strong data-rich-upload-message>准备上传</strong><small data-rich-upload-file></small></div><span class="rich-upload-progress-value" data-rich-upload-percent>0%</span></div>
+   <div class="rich-upload-progress-track" role="progressbar" aria-label="附件上传进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rich-upload-bar></span></div>
+  </div>
   <input class="rich-file-input" data-rich-file-input="image" type="file" accept="image/*" tabindex="-1" aria-hidden="true">
   <input class="rich-file-input" data-rich-file-input="file" type="file" accept="*/*" tabindex="-1" aria-hidden="true">
   <div class="rich-editor-surface" data-rich-editor contenteditable="true" role="textbox" aria-multiline="true" aria-label="${esc(label)}" data-placeholder="${esc(placeholder)}">${html}</div>
   <textarea class="rich-editor-content-hidden" name="${esc(fieldName)}" tabindex="-1" aria-hidden="true"></textarea>
-  <div class="rich-editor-hint"><span><strong>编辑提示：</strong>先定位光标再插入图片或附件；拖动图片右下角可调整尺寸，查看正文时点击图片可放大。</span><span>应用不再设置单个文件或内嵌媒体总量上限；媒体以内嵌数据保存，实际容量仍受浏览器本地存储和 Supabase 数据库配额约束。</span></div>
+  <div class="rich-editor-hint"><span><strong>编辑提示：</strong>先定位光标再插入图片或附件；拖动图片右下角可调整尺寸，查看正文时点击图片可放大。</span><span>云端附件会上传到 Supabase Storage；未登录时暂存在当前浏览器，登录同步后自动迁移。</span></div>
  </div>`;
 }
 function renderKnowledgeBody(content){const source=String(content||'');if(isRichKnowledgeHtml(source))return `<div class="knowledge-rich-content">${sanitizeKnowledgeHtml(source)||'<p>暂无内容。</p>'}</div>`;return renderEditableLessonText(source||'暂无内容');}
