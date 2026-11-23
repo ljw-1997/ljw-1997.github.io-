@@ -1922,3 +1922,28 @@ input::placeholder,textarea::placeholder{color:#849187;opacity:1}
     align-self:start!important;margin:0!important;
   }
 }
+
+
+/* Supabase capacity monitor */
+.usage-monitor{margin:18px 0 16px;padding:18px 19px;border:1px solid #dfe8df;border-radius:15px;background:rgba(249,252,248,.94)}
+.usage-monitor-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}
+.usage-monitor-head h4{font-size:13px;margin:0;color:var(--ink)}
+.usage-monitor-head p{font-size:10px;color:#87948a;margin:5px 0 0;line-height:1.6}
+.usage-metrics-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.usage-metric{min-width:0;padding:13px;border:1px solid #e6ece5;border-radius:12px;background:#fff}
+.usage-metric-top,.usage-metric-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.usage-metric-top span{font-size:11px;color:#66756a;font-weight:700}
+.usage-metric-top strong{font-size:17px;color:#263d2e;font-variant-numeric:tabular-nums}
+.usage-meter-track{height:8px;margin:11px 0 8px;border-radius:99px;background:#edf1ec;overflow:hidden}
+.usage-meter-track span{display:block;height:100%;border-radius:99px;background:#6e9d76;transition:width .25s ease}
+.usage-metric.is-warning .usage-meter-track span{background:#c99a50}
+.usage-metric.is-danger .usage-meter-track span{background:#bd6d58}
+.usage-metric-bottom span,.usage-metric-bottom strong{font-size:10px;color:#7f8c82;font-variant-numeric:tabular-nums}
+.usage-metric small{display:block;margin-top:8px;color:#8c998f;font-size:9px;line-height:1.6}
+.usage-workspace-row{display:flex;justify-content:space-between;gap:12px;padding:12px 2px 3px;margin-top:10px;border-top:1px solid #e9eee8;font-size:10px;color:#718075}
+.usage-workspace-row strong{color:#34483a;font-size:11px;font-variant-numeric:tabular-nums}
+.usage-monitor-empty{padding:15px;border:1px dashed #dce5dc;border-radius:10px;color:#839086;background:#fff;font-size:11px;line-height:1.7}
+.usage-monitor-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;color:#8a968d;font-size:9px}
+.usage-monitor-note{margin:10px 0 0!important;color:#99a39a!important;font-size:9px!important;line-height:1.7}
+.usage-monitor-error{margin:9px 0 0!important;color:#a65e4e!important;font-size:10px!important;line-height:1.6}
+@media(max-width:620px){.usage-monitor{padding:14px}.usage-metrics-grid{grid-template-columns:1fr}.usage-monitor-head{align-items:flex-start}.usage-metric-top strong{font-size:16px}}

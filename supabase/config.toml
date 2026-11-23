@@ -1,0 +1,3 @@
+# Keep JWT verification enabled: the browser must call this function with a signed-in user session.
+[functions.usage-monitor]
+verify_jwt = true

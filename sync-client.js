@@ -556,6 +556,28 @@
       if (shouldPushAgain) schedulePush(150);
     }
   }
+  async function getProjectUsage() {
+    if (!client || !user) throw new Error('请先登录 Supabase 账号，再查看项目容量。');
+    if (!client.functions || typeof client.functions.invoke !== 'function') {
+      throw new Error('当前 Supabase SDK 不支持 Edge Functions 调用，请刷新页面或更新 SDK。');
+    }
+    const { data, error } = await client.functions.invoke('usage-monitor', { body: {} });
+    if (error) {
+      let message = error.message || '容量查询失败。';
+      try {
+        if (error.context && typeof error.context.json === 'function') {
+          const detail = await error.context.json();
+          if (detail && (detail.error || detail.message)) message = detail.error || detail.message;
+        }
+      } catch (_) {}
+      throw new Error(message);
+    }
+    if (!data || typeof data !== 'object' || !Number.isFinite(Number(data.database_bytes)) || !Number.isFinite(Number(data.storage_bytes))) {
+      throw new Error('容量监控函数返回的数据格式不正确。请检查 Edge Function 与 SQL 函数是否已部署。');
+    }
+    return data;
+  }
+
   async function syncNow() {
     if (!user) throw new Error('请先登录。');
     if (status.mode === 'conflict') throw new Error('请先处理同步冲突。');
@@ -613,6 +635,7 @@
     forceUploadLocal,
     resolveConflict,
     syncNow,
+    getProjectUsage,
     onLocalSave,
     reinitialise: initialiseFromConfig
   };
