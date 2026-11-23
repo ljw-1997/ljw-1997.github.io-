@@ -3,6 +3,10 @@
   'use strict';
 
   const TABLE = 'embedded_learning_workspaces';
+  const STORAGE_BUCKET = 'knowledge-media';
+  const SIGNED_URL_TTL = 900;
+  const mediaUrlCache = new Map();
+  const mediaMigrationInFlight = new Map();
   const CONFIG_KEY = 'embedded-learning-hub-supabase-config-v1';
   const META_KEY = 'embedded-learning-hub-sync-meta-v1';
   const SDK = window.supabase;
@@ -111,6 +115,152 @@
     if (!row || typeof row !== 'object' || !row.user_id || !row.state || typeof row.state !== 'object') return null;
     return { user_id: row.user_id, state: row.state, revision: Number(row.revision) || 1, updated_at: row.updated_at || null };
   }
+  function extensionForMime(mime, filename) {
+    const known = {
+      'image/png':'png','image/jpeg':'jpg','image/gif':'gif','image/webp':'webp','image/avif':'avif','image/bmp':'bmp',
+      'application/pdf':'pdf','text/plain':'txt','text/csv':'csv','text/markdown':'md','application/json':'json',
+      'application/zip':'zip','application/gzip':'gz','application/octet-stream':'bin',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'xlsx',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation':'pptx',
+      'application/msword':'doc','application/vnd.ms-excel':'xls','application/vnd.ms-powerpoint':'ppt'
+    };
+    if (known[mime]) return known[mime];
+    const match = String(filename || '').toLowerCase().match(/\.([a-z0-9]{1,10})$/);
+    return match ? match[1] : 'bin';
+  }
+  function makeMediaId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    return 'f' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 18);
+  }
+  function isStorageMediaReference(value) {
+    return /^supabase-storage:\/\/knowledge-media\/[0-9a-f-]{36}\/[a-z0-9][a-z0-9._-]{0,159}$/i.test(String(value || ''));
+  }
+  async function uploadBlobToStorage(blob, mime, filename) {
+    if (!client || !user) throw new Error('请先登录 Supabase 账号，再将图片或附件上传到 Storage。');
+    if (!client.storage || typeof client.storage.from !== 'function') throw new Error('当前 Supabase SDK 未提供 Storage API，请检查 SDK 是否加载成功。');
+    const safeMime = String(mime || blob.type || 'application/octet-stream').toLowerCase().split(';')[0].trim();
+    const path = String(user.id).toLowerCase() + '/' + makeMediaId() + '.' + extensionForMime(safeMime, filename);
+    const { data, error } = await client.storage.from(STORAGE_BUCKET).upload(path, blob, {
+      cacheControl: '3600',
+      contentType: safeMime,
+      upsert: false
+    });
+    if (error) throw error;
+    return 'supabase-storage://' + STORAGE_BUCKET + '/' + (data && data.path ? data.path : path);
+  }
+  async function uploadMediaFile(file, contentType) {
+    if (!file || typeof file !== 'object') throw new Error('没有选择有效的附件文件。');
+    return uploadBlobToStorage(file, contentType || file.type || 'application/octet-stream', file.name || 'attachment.bin');
+  }
+  async function resolveMediaUrl(reference, forceDownload, downloadName, forceRefresh) {
+    if (!client || !user) throw new Error('请登录 Supabase 账号后查看私有附件。');
+    const match = /^supabase-storage:\/\/knowledge-media\/([0-9a-f-]{36})\/([a-z0-9][a-z0-9._-]{0,159})$/i.exec(String(reference || ''));
+    if (!match) throw new Error('附件对象引用格式无效。');
+    if (match[1].toLowerCase() !== String(user.id).toLowerCase()) throw new Error('已拒绝访问其他账号的 Storage 对象。');
+    const path = match[1] + '/' + match[2];
+    const safeDownloadName = String(downloadName || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180);
+    const cacheKey = path + (forceDownload ? ':download:' + safeDownloadName : ':inline');
+    const cached = forceRefresh ? null : mediaUrlCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now() + 60000) return cached.url;
+    const options = forceDownload ? { download: safeDownloadName || true } : {};
+    const { data, error } = await client.storage.from(STORAGE_BUCKET).createSignedUrl(path, SIGNED_URL_TTL, options);
+    if (error) throw error;
+    if (!data || !data.signedUrl) throw new Error('Supabase Storage 未返回有效的签名 URL。');
+    mediaUrlCache.set(cacheKey, { url: data.signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL * 1000 });
+    return data.signedUrl;
+  }
+  function containsInlineMedia(value) {
+    if (typeof value === 'string') return /(?:src|href)\s*=\s*["']data:[^"']+["']/i.test(value);
+    if (Array.isArray(value)) return value.some(containsInlineMedia);
+    if (value && typeof value === 'object') return Object.keys(value).some(key => containsInlineMedia(value[key]));
+    return false;
+  }
+  async function migrateInlineMediaString(value, cache) {
+    const pattern = /((?:src|href)\s*=\s*)(["'])(data:[^"']+)\2/gi;
+    const matches = Array.from(value.matchAll(pattern));
+    if (!matches.length) return { value, changed: false };
+    let output = value;
+    for (const match of matches) {
+      const dataUrl = match[3];
+      let reference = cache.get(dataUrl);
+      if (!reference) {
+        const parts = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i.exec(dataUrl);
+        if (!parts) throw new Error('发现无法识别的旧版 Base64 附件；为防止数据丢失，已停止本次云端写入。');
+        const response = await fetch(dataUrl);
+        if (!response.ok) throw new Error('读取旧版 Base64 附件失败，未修改云端工作区。');
+        const blob = await response.blob();
+        let legacyMime = parts[1].toLowerCase();
+        if (['application/x-zip-compressed', 'application/x-zip', 'multipart/x-zip'].includes(legacyMime)) legacyMime = 'application/zip';
+        reference = await uploadBlobToStorage(blob, legacyMime, 'legacy.' + extensionForMime(legacyMime));
+        cache.set(dataUrl, reference);
+      }
+      output = output.replace(match[0], match[1] + match[2] + reference + match[2]);
+    }
+    return { value: output, changed: true };
+  }
+  async function migrateStateInlineMedia(state) {
+    const cache = new Map();
+    let changed = false;
+    async function visit(value) {
+      if (typeof value === 'string') {
+        const result = await migrateInlineMediaString(value, cache);
+        changed = changed || result.changed;
+        return result.value;
+      }
+      if (Array.isArray(value)) {
+        const result = [];
+        for (const item of value) result.push(await visit(item));
+        return result;
+      }
+      if (value && typeof value === 'object') {
+        const result = {};
+        for (const [key, item] of Object.entries(value)) result[key] = await visit(item);
+        return result;
+      }
+      return value;
+    }
+    return { state: await visit(state), changed };
+  }
+  async function prepareStateForStorage(snapshot) {
+    const originalFingerprint = fingerprint(snapshot);
+    const result = await migrateStateInlineMedia(snapshot);
+    if (result.changed) {
+      // Persist the smaller state locally only when the live workspace has not
+      // changed while the binary uploads were in flight.
+      try {
+        if (fingerprint(getAppStateOrThrow()) === originalFingerprint) {
+          const a = app();
+          if (a && typeof a.applyRemoteState === 'function') a.applyRemoteState(result.state);
+        }
+      } catch (error) {
+        console.warn('[EmbeddedSync] Storage migration completed, but local reference update was deferred.', error);
+      }
+    }
+    return result.state;
+  }
+  async function migrateCloudRowMedia(rawRow) {
+    const row = normaliseCloudRow(rawRow);
+    if (!row || !containsInlineMedia(row.state)) return row;
+    const key = String(user && user.id || '') + ':' + row.revision;
+    if (mediaMigrationInFlight.has(key)) return mediaMigrationInFlight.get(key);
+    const task = (async () => {
+      const result = await migrateStateInlineMedia(row.state);
+      if (!result.changed) return row;
+      const { data, error } = await client.from(TABLE)
+        .update({ state: result.state, revision: row.revision + 1, updated_at: new Date().toISOString() })
+        .eq('user_id', user.id).eq('revision', row.revision)
+        .select('user_id,state,revision,updated_at').maybeSingle();
+      if (error) throw error;
+      if (data) return normaliseCloudRow(data);
+      const latest = await fetchRow();
+      if (latest && !containsInlineMedia(latest.state)) return latest;
+      throw new Error('云端附件迁移期间检测到并发修改；原始数据库内容未被覆盖，请重新同步。');
+    })();
+    mediaMigrationInFlight.set(key, task);
+    try { return await task; }
+    finally { mediaMigrationInFlight.delete(key); }
+  }
   async function fetchRow() {
     if (!client || !user) throw new Error('尚未登录。');
     const { data, error } = await client.from(TABLE).select('user_id,state,revision,updated_at').eq('user_id', user.id).maybeSingle();
@@ -170,7 +320,9 @@
   }
   async function handleRemoteRow(rawRow) {
     if (!user || status.mode === 'needs-upload' || status.mode === 'needs-restore' || status.mode === 'conflict') return;
-    const row = normaliseCloudRow(rawRow);
+    let row = normaliseCloudRow(rawRow);
+    if (!row || row.revision <= status.revision) return;
+    row = await migrateCloudRowMedia(row);
     if (!row || row.revision <= status.revision) return;
     const meta = readMeta();
     const local = getAppStateOrThrow();
@@ -255,6 +407,7 @@
   async function bootstrapUser(nextUser) {
     if (!nextUser || !nextUser.id) return;
     if (bootPromise && bootUserId === nextUser.id) return bootPromise;
+    if (user && user.id !== nextUser.id) mediaUrlCache.clear();
     bootUserId = nextUser.id;
     bootPromise = (async () => {
       user = nextUser;
@@ -267,7 +420,8 @@
       clearTimers();
       closeRealtime();
       setStatus('loading', '正在检查云端工作区…');
-      const row = await fetchRow();
+      let row = await fetchRow();
+      if (row) row = await migrateCloudRowMedia(row);
       if (passwordRecoveryMode) {
         setStatus('password-recovery', '重置链接已验证，请设置新密码。');
         return;
@@ -341,6 +495,7 @@
           }
         } else if (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION' || !session) {
           user = null;
+          mediaUrlCache.clear();
           passwordRecoveryMode = false;
           bootUserId = '';
           bootPromise = null;
@@ -453,7 +608,7 @@
   }
   async function uploadLocal() {
     if (!user || status.mode !== 'needs-upload') throw new Error('当前账号的云端工作区不是空白，不能走首次迁移流程。');
-    const snapshot = getAppStateOrThrow();
+    const snapshot = await prepareStateForStorage(getAppStateOrThrow());
     setStatus('syncing', '正在将当前设备数据首次迁移到云端…');
     const now = new Date().toISOString();
     const { data, error } = await client.from(TABLE).insert({ user_id: user.id, state: snapshot, revision: 1, updated_at: now }).select('user_id,state,revision,updated_at').single();
@@ -472,8 +627,9 @@
   }
   async function restoreCloud() {
     if (!user) throw new Error('请先登录。');
-    const row = await fetchRow();
+    let row = await fetchRow();
     if (!row) { setStatus('needs-upload', '云端没有数据，可以将此设备数据迁移到云端。'); return; }
+    row = await migrateCloudRowMedia(row);
     if (!window.confirm('从云端恢复会覆盖此浏览器当前的学习数据。建议先导出本机 JSON 备份。确定继续吗？')) return;
     applyRemote(row, '已从云端恢复学习数据。');
   }
@@ -481,7 +637,7 @@
     if (!user) throw new Error('请先登录。');
     const row = expectedRow || conflictRow || await fetchRow();
     if (!row) return uploadLocal();
-    const snapshot = getAppStateOrThrow();
+    const snapshot = await prepareStateForStorage(getAppStateOrThrow());
     setStatus('syncing', '正在以本机数据更新云端版本…');
     const { data, error } = await client.from(TABLE)
       .update({ state: snapshot, revision: row.revision + 1, updated_at: new Date().toISOString() })
@@ -530,11 +686,12 @@
     if (pushInFlight) { pendingPush = true; return; }
     pushInFlight = true;
     pendingPush = false;
-    const snapshot = getAppStateOrThrow();
-    const fp = fingerprint(snapshot);
-    const expectedRevision = status.revision;
-    inFlightUpload = { expectedRevision, fingerprint: fp };
+    let uploadFailed = false;
     try {
+      const snapshot = await prepareStateForStorage(getAppStateOrThrow());
+      const fp = fingerprint(snapshot);
+      const expectedRevision = status.revision;
+      inFlightUpload = { expectedRevision, fingerprint: fp };
       if (fp === lastSnapshotFingerprint) {
         dirty = false;
         status.hasLocalChanges = false;
@@ -552,10 +709,13 @@
         return;
       }
       setLinked(normaliseCloudRow(data), snapshot);
+    } catch (error) {
+      uploadFailed = true;
+      throw error;
     } finally {
       inFlightUpload = null;
       pushInFlight = false;
-      const shouldPushAgain = (pendingPush || dirty) && status.mode === 'linked';
+      const shouldPushAgain = (pendingPush || (!uploadFailed && dirty)) && status.mode === 'linked';
       pendingPush = false;
       if (shouldPushAgain) schedulePush(150);
     }
@@ -640,6 +800,8 @@
     resolveConflict,
     syncNow,
     getProjectUsage,
+    uploadMediaFile,
+    resolveMediaUrl,
     onLocalSave,
     reinitialise: initialiseFromConfig
   };

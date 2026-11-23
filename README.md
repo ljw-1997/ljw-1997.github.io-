@@ -1,6 +1,6 @@
 # 嵌入式学习站 · Embedded Learning Station
 
-**当前版本：V20.0（数据安全与持久化基础加固）**
+**当前版本：V20.1（Supabase Storage 媒体对象迁移）**
 
 一个无需构建步骤的中文嵌入式学习工作台，可直接部署到 GitHub Pages。网站使用原生 HTML、CSS 和 JavaScript；本地数据保存在浏览器中，可选接入 Supabase Auth 与 PostgreSQL 实现跨设备同步。
 
@@ -8,7 +8,7 @@
 
 - **学习总览与学习地图**：14 个内置学习模块、133 个知识单元；支持自定义课程、阶段和课时。
 - **每日记录**：记录学习过程，支持列表、详情和日历视图。
-- **我的知识库**：创建、编辑、分类和放大阅读知识卡片；富文本支持标题、字体、字号、颜色、高亮、列表、表格、代码块、图片和附件；ZIP 附件兼容不同浏览器返回的 MIME 类型；移除应用层的单文件、媒体总量、Data URL 字符长度及图片像素尺寸限制。
+- **我的知识库**：创建、编辑、分类和放大阅读知识卡片；富文本支持标题、字体、字号、颜色、高亮、列表、表格、代码块、图片和附件；登录云同步后，图片/附件直接上传到 Supabase Storage 私有 Bucket，工作区仅保存对象引用；兼容旧版 Base64 媒体自动迁移。
 - **资源收藏**：收藏外部资料，支持编辑、分类和详情查看。
 - **学习进度**：记录课时完成状态、继续学习位置和阅读位置。
 - **操作保护**：删除操作提供独立撤销提示，每项有自己的 10 秒时限。
@@ -29,7 +29,7 @@
 | `sync-config.js` | Supabase 公共连接配置，可留空 |
 | `sync-client.js` | Supabase 登录、云端保存/恢复、冲突处理和容量监控调用 |
 | `.nojekyll` | GitHub Pages 静态文件发布标记 |
-| `supabase/` | 工作区建表/RLS/Realtime SQL、容量监控 SQL、Edge Function 与安全检查（需部署到 Supabase） |
+| `supabase/` | 工作区建表/RLS/Realtime SQL、Storage Bucket 与对象 RLS SQL、容量监控 SQL、Edge Function 与安全检查（需部署到 Supabase） |
 | `README.md` | 使用说明与版本迭代记录 |
 
 部署步骤：
@@ -51,16 +51,26 @@ python -m http.server 8000
 
 云同步是可选功能。不配置 Supabase 时，学习站仍可在当前浏览器本地使用；配置并登录后，工作区数据可在同一账号的多台设备间同步。
 
-1. 在 Supabase Dashboard → SQL Editor 中以数据库管理员身份运行 `supabase/sql/workspace-schema.sql`。脚本会创建 `embedded_learning_workspaces`，配置每用户 SELECT/INSERT/UPDATE RLS 策略，并将表加入 `supabase_realtime` publication。脚本可重复运行。
+1. 在 Supabase Dashboard → SQL Editor 中以数据库管理员身份依次运行 `supabase/sql/workspace-schema.sql` 和 `supabase/sql/storage-media.sql`。前者创建 `embedded_learning_workspaces` 并配置每用户 RLS/Realtime；后者创建私有 `knowledge-media` Bucket，并配置按 Auth 用户 UUID 目录隔离的 Storage 读、写、更新和删除策略。两个脚本都可重复运行。
 2. 在 Supabase 的 Project Connect / API Keys 页面获取 Project URL 和 **publishable key**（旧项目的 anon key 仍可使用）。
 3. 在网站「偏好与数据 → 跨设备云同步 → Supabase 连接配置」中填写 URL 和 key，保存并登录。
 4. 首次迁移本机数据或恢复云端数据时，按页面提示明确选择操作；覆盖数据前建议先导出 JSON 备份。
 5. 如需项目容量监控，再按后文说明额外部署 `usage-monitor.sql` 和 Edge Function。
 
-`workspace-schema.sql` 是 V20.0 随包提供的工作区初始化脚本。对于已经有数据的现有项目，执行前应先做数据库备份；脚本会创建表（如果不存在）、补充缺少的状态字段、重建本项目使用的三条 RLS 策略，并确保 Realtime publication 包含工作区表。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
+`workspace-schema.sql` 与 `storage-media.sql` 是随包提供的 Supabase 初始化脚本。对于已经有数据的现有项目，执行前应先做数据库备份；前者创建/升级工作区表并配置 RLS/Realtime，后者创建私有媒体 Bucket 并配置每用户对象权限。不要把 `service_role` 或 `sb_secret_...` 密钥写入前端代码、`sync-config.js` 或公开仓库；前端只能使用公开的 publishable/anon key。
 
 如需让新设备自动获得连接地址，可在部署前将默认 Project URL 和公开 publishable key 填入 `sync-config.js`。若留空，则每台设备都可以在网站设置页单独配置。
 
+
+### Supabase Storage 图片与附件（V20.1）
+
+登录 Supabase 账号后，富文本编辑器会把选中的图片/附件二进制直接上传到私有 Bucket `knowledge-media`，对象路径采用 `<auth.uid()>/<随机文件名>.<扩展名>`。数据库中的 HTML 只保存 `supabase-storage://knowledge-media/<user-id>/<object-name>` 稳定引用，不再把文件 Base64 写入 `embedded_learning_workspaces.state`。展示时由浏览器按当前登录用户生成有效期 15 分钟的 signed URL；signed URL 不写回工作区，也不会作为永久文件地址跨设备同步。
+
+`storage-media.sql` 会把 Bucket 设为 Private，并按第一层目录必须等于 `auth.uid()` 配置 SELECT、INSERT、UPDATE、DELETE 策略。不要将 Bucket 改成 Public，也不要在前端使用 service_role/secret key。
+
+**旧附件迁移：** 部署 V20.1 后，已登录用户启动云同步时，客户端会检测旧工作区 HTML 中的 Base64 `src`/`href`，先上传对应二进制到 Storage，再使用 revision compare-and-swap 更新 JSONB 状态。首次迁移本机数据、恢复云端、覆盖云端和后续自动同步也都会经过同一迁移步骤。迁移遇到 Storage 权限或网络错误时，本次云端写入会停止，原有数据不会被 Base64 状态覆盖；请检查 Bucket/RLS 后重试。离线或未登录时，为保持本地可用性，新附件仍可能暂存在当前浏览器的旧式 Data URL 格式；用户登录并同步后会转换为 Storage 对象引用。
+
+**备份注意：** V20.1 的工作区 JSON 导出会保存对象引用，不会打包 Storage 二进制文件。需要跨项目迁移或长期离线归档时，应同时保留 Supabase Storage 对象；删除知识卡片/课时不会自动删除其 Storage 对象，以避免不同步设备引用的文件被提前删除。可在 Dashboard → Storage → `knowledge-media` 管理对象。
 
 ### Supabase 容量监控（V19 增补）
 
@@ -76,13 +86,11 @@ python -m http.server 8000
 
 安全边界：SQL RPC 已撤销 `PUBLIC`、`anon` 和 `authenticated` 的执行权限，只允许 `service_role` 调用，并以调用者权限运行；Edge Function 再验证真实登录用户并检查 UUID 白名单。不要移除白名单校验或把 `service_role`/secret key 暴露给浏览器。若新增其他授权管理员，应将其 Auth UUID 加入 `USAGE_MONITOR_ALLOWED_USER_IDS`。
 
-## 大型图片与附件说明（V19.2）
+## 大型图片与附件说明（V19.2 历史行为）
 
-V19.2 已移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒体总量限制、约 2 MB Data URL 字符长度限制、图片 12,000 px 尺寸拦截，以及 12 MiB JSON 备份导入上限。HTML 安全白名单仍然保留，只允许约定的图片和文档类型，不允许 HTML、SVG、脚本等主动内容作为附件。
+V19.2 曾移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒体总量限制、约 2 MB Data URL 字符长度限制、图片 12,000 px 尺寸拦截，以及 12 MiB JSON 备份导入上限；当时图片和附件以 Base64 Data URL 存入工作区。
 
-**这不等于无限容量。** 当前版本仍将图片/附件转换成 Base64 Data URL，嵌入工作区 JSON；本地工作区仍写入浏览器 `localStorage`，登录后整个工作区仍写入 Supabase PostgreSQL 的 `embedded_learning_workspaces.state`。因此，大文件仍会受到浏览器站点存储配额、设备可用内存、Supabase 数据库剩余容量及 API 请求体限制影响；这些内容会占用数据库容量，而不是 Supabase Storage Bucket 容量。若浏览器存储空间不足，页面会提示本次更改未可靠保存，请先导出备份。
-
-若要稳定支持大量或几十 MB 以上的文件，下一阶段应将二进制附件改为 Supabase Storage 对象，并在数据库只保存对象路径和元数据；单纯移除前端限制不能突破浏览器或 Supabase 平台配额。
+**V20.1 已替换云端媒体存储方式。** 登录 Supabase 后，新的图片/附件直接写入私有 Supabase Storage；旧版云端 Base64 内容会在登录初始化及云同步写入前迁移。未登录或离线时，为保持本地工作区可用，附件暂存于浏览器；首次云端同步时再迁移到 Storage。平台本身仍有 Storage 单对象大小、项目配额和网络请求限制，具体以 Supabase 项目设置与套餐为准。
 
 ## 本地工作区校验与恢复（V20.0）
 
@@ -104,7 +112,7 @@ V19.2 已移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 - 清除浏览器站点数据、重置工作区或使用旧备份覆盖数据前，请先导出完整工作区 JSON，或确认云端同步已经完成。
 - 网站代码仓库不包含个人知识卡片种子文件；已有知识卡片属于用户工作区数据，需通过本地存储、云同步或完整 JSON 备份保留和迁移。
 
-## 基础测试（V20.0）
+## 基础测试（V20.1）
 
 需要 Node.js 18 或更高版本，无需安装 npm 依赖：
 
@@ -112,7 +120,7 @@ V19.2 已移除应用自身设定的 768 KiB 单文件限制、1 MiB 内嵌媒�
 node --test tests/*.test.cjs
 ```
 
-测试覆盖工作区 Schema、本地损坏数据恢复分支、工作区 SQL/RLS/Realtime 契约、revision compare-and-swap 关键条件，以及恢复保护代码路径。它们属于本地静态/单元级检查，不替代真实 Supabase 项目的 RLS 登录态测试或多设备端到端测试。部署后可按 `supabase/tests/workspace-rls-smoke-test.sql` 对真实 Auth 用户执行 RLS 可见性检查。
+测试覆盖工作区 Schema、本地损坏数据恢复分支、工作区 SQL/RLS/Realtime 契约、Storage 私有 Bucket 与按用户目录授权、Base64 附件迁移、revision compare-and-swap 关键条件，以及恢复保护代码路径。它们属于本地静态/单元级检查，不替代真实 Supabase 项目的 RLS 登录态测试或多设备端到端测试。部署后可按 `supabase/tests/workspace-rls-smoke-test.sql` 对真实 Auth 用户执行 RLS 可见性检查。
 
 ## 安全与隐私
 
@@ -149,8 +157,9 @@ node --test tests/*.test.cjs
 | V19.1（ZIP 附件兼容修复） | 识别 `application/x-zip-compressed`、`application/x-zip`、`multipart/x-zip` 及无 MIME 但扩展名为 `.zip` 的文件；统一写入 `application/zip` Data URL，避免保存时被 HTML 白名单清洗。 |
 | V19.2（解除应用层媒体大小限制） | 移除单文件、总媒体、Data URL 长度、图片像素尺寸与 JSON 备份导入的应用层固定上限；明确提示浏览器本地存储和 Supabase 数据库仍有平台配额。 |
 | V20.0 | 加入工作区严格 Schema 校验；本地 JSON 损坏时进入只读恢复保护模式并保留原始数据导出入口；恢复期间阻止本地保存和云同步；补充 Supabase 工作区建表、每用户 RLS 与 Realtime 初始化 SQL；新增 Node 内置测试及 RLS 手工烟雾测试。 |
+| V20.1 | 将登录后的富文本图片/附件上传到 Supabase Storage 私有 Bucket；数据库仅保存对象引用；按 Auth UUID 目录隔离 Storage 权限；云同步自动迁移旧 Base64 附件；使用短期 signed URL 渲染私有媒体并保留稳定路径引用。 |
 
 ---
 
 **项目类型：** 静态 HTML/CSS/JavaScript 应用，无构建步骤。  
-**当前发行版本：** V20.0 · Workspace Data Safety Baseline
+**当前发行版本：** V20.1 · Supabase Storage Media Objects + Workspace Data Safety

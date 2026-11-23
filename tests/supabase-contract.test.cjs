@@ -46,3 +46,27 @@ test('recovery mode blocks save, cloud read-apply, and exposes original-data exp
   assert.match(app, /if\(workspaceRecovery\.active\)throw new Error\('本机工作区处于恢复保护模式/);
   assert.match(sync, /isRecoveryMode\(\)/);
 });
+
+
+test('Storage SQL creates a private bucket with per-user object policies', () => {
+  const storageSql = fs.readFileSync(path.join(root, 'supabase/sql/storage-media.sql'), 'utf8');
+  assert.match(storageSql, /insert into storage\.buckets/i);
+  assert.match(storageSql, /'knowledge-media'[\s\S]{0,100}'knowledge-media'[\s\S]{0,50}false/i);
+  assert.match(storageSql, /for select\s+to authenticated\s+using\s*\([\s\S]*bucket_id = 'knowledge-media'[\s\S]*storage\.foldername\(name\)\)\[1\] = \(select auth\.uid\(\)\)::text/i);
+  assert.match(storageSql, /for insert\s+to authenticated\s+with check/i);
+  assert.match(storageSql, /for update\s+to authenticated\s+using[\s\S]*with check/i);
+  assert.match(storageSql, /for delete\s+to authenticated\s+using/i);
+  assert.doesNotMatch(storageSql, /public\s*=\s*true/i);
+});
+
+test('browser sync uploads and signs private Storage media, then migrates legacy Base64 HTML', () => {
+  assert.match(sync, /client\.storage\.from\(STORAGE_BUCKET\)\.upload/);
+  assert.match(sync, /createSignedUrl\(path,\s*SIGNED_URL_TTL/);
+  assert.match(sync, /async function migrateStateInlineMedia/);
+  assert.match(sync, /async function migrateCloudRowMedia/);
+  assert.match(sync, /prepareStateForStorage\(getAppStateOrThrow\(\)\)/);
+  assert.match(sync, /supabase-storage:\/\/' \+ STORAGE_BUCKET/);
+  assert.match(app, /supabase-storage:\\\/\\\/knowledge-media/);
+  assert.match(app, /data-storage-ref/);
+  assert.match(app, /uploadMediaFile\(file,mime\)/);
+});

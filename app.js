@@ -2709,6 +2709,9 @@ function sanitizeKnowledgeHtml(source){
  const safeMediaUrl=(v,kind='link')=>{
   const value=String(v||'').trim();
   if(/^https?:\/\//i.test(value))return value;
+  // Stable private Storage references are persisted in HTML; they are resolved to
+  // short-lived signed URLs only in the rendered DOM, never saved back to state.
+  if(/^supabase-storage:\/\/knowledge-media\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[a-z0-9][a-z0-9._-]{0,159}$/i.test(value))return value;
   if(kind!=='attachment'&&kind!=='image')return '';
   const match=/^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(value);
   if(!match)return '';
@@ -2769,13 +2772,16 @@ function sanitizeKnowledgeHtml(source){
    }
    const attrs={};
    if(tag==='IMG'){
-    const src=safeMediaUrl(child.getAttribute('src'),'image');if(!src){child.replaceWith(...Array.from(child.childNodes));continue;}attrs.src=src;
+    const stableRef=child.getAttribute('data-storage-ref')||child.getAttribute('src');
+    const src=safeMediaUrl(stableRef,'image');if(!src){child.replaceWith(...Array.from(child.childNodes));continue;}attrs.src=src;
+    if(src.startsWith('supabase-storage://'))attrs['data-storage-ref']=src;
     attrs.alt=String(child.getAttribute('alt')||'插入的图片').slice(0,240);const title=child.getAttribute('title');if(title)attrs.title=String(title).slice(0,240);
    }else if(tag==='A'){
-    const rawHref=child.getAttribute('href')||'';
+    const rawHref=child.getAttribute('data-storage-ref')||child.getAttribute('href')||'';
     const isAttachment=child.classList.contains('rich-attachment')&&child.hasAttribute('download');
     const href=isAttachment?safeMediaUrl(rawHref,'attachment'):safeMediaUrl(rawHref,'link');
     if(!href){child.replaceWith(...Array.from(child.childNodes));continue;}attrs.href=href;
+    if(isAttachment&&href.startsWith('supabase-storage://'))attrs['data-storage-ref']=href;
     if(isAttachment){const dl=child.getAttribute('download');attrs.download=String(dl||'download').replace(/[\\/:*?"<>|]/g,'_').slice(0,180)||'download';}
     const title=child.getAttribute('title');if(title)attrs.title=String(title).slice(0,240);
    }
@@ -2811,10 +2817,37 @@ function normalizeRichDataUrlMime(dataUrl,mime){
  return String(dataUrl||'').replace(/^data:[^;,]+;base64,/i,`data:${mime};base64,`);
 }
 function richAttachmentHtml(dataUrl,file){const mime=String(file?.type||'application/octet-stream').replace(/[^a-zA-Z0-9!#$&^_.+\/-]/g,'')||'application/octet-stream';const safeName=String(file?.name||'附件').replace(/[\\/:*?"<>|]/g,'_').slice(0,180)||'附件';return `<a class="rich-attachment" href="${esc(dataUrl)}" download="${esc(safeName)}" title="下载附件：${esc(safeName)}" contenteditable="false">${icon('paperclip',13)} <strong>${esc(safeName)}</strong><span>下载</span></a>`;}
-function insertRichMediaFile(input,file){const wrap=input.closest('.rich-editor-shell');const editor=wrap?.querySelector('[data-rich-editor]');if(!editor||!file)return;const kind=input.dataset.richFileInput;input.value='';const detectedMime=String(file.type||'').toLowerCase().split(';')[0].trim();const mime=kind==='image'?detectedMime:richAttachmentMime(file);const rasterMimes=new Set(['image/png','image/jpeg','image/gif','image/webp','image/avif','image/bmp']);const attachmentMimes=new Set(['application/pdf','text/plain','text/csv','text/markdown','application/json','application/zip','application/x-zip-compressed','application/x-zip','multipart/x-zip','application/gzip','application/octet-stream','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.presentationml.presentation','application/msword','application/vnd.ms-excel','application/vnd.ms-powerpoint',...rasterMimes]);if(kind==='image'&&!rasterMimes.has(mime)){showToast('请选择 PNG、JPEG、GIF、WebP、AVIF 或 BMP 图片；SVG 等主动内容不作为图片内嵌。');return;}if(kind!=='image'&&!attachmentMimes.has(mime)){showToast('该文件类型不支持内嵌。支持 PDF、文本/CSV/Markdown、JSON、ZIP、Office 文档和常见位图；HTML、SVG 与脚本文件请勿作为附件插入。');return;}
- const reader=new FileReader();reader.onerror=()=>showToast('读取文件失败，请重试。');reader.onload=()=>{const rawDataUrl=String(reader.result||'');if(!rawDataUrl.startsWith('data:')){showToast('文件格式读取失败。');return;}const dataUrl=kind==='image'?rawDataUrl:normalizeRichDataUrlMime(rawDataUrl,mime);if(kind==='image'){
-  const preview=new Image();preview.onerror=()=>{replaceSelectionWithHtml(editor,richAttachmentHtml(dataUrl,file));rememberRichEditorSelection();showToast('当前浏览器无法直接预览该图片格式，已将原始文件作为附件插入，可下载后用本地应用打开。');};preview.onload=()=>{const naturalW=preview.naturalWidth||480,naturalH=preview.naturalHeight||320;const width=Math.max(100,Math.min(640,naturalW));const height=Math.max(70,Math.round(width*naturalH/naturalW));const safeName=esc(file.name||'插入图片');const html=`<span class="rich-image-frame" contenteditable="false" style="display:inline-block;width:${width}px;height:${height}px;max-width:100%;resize:both;overflow:hidden;vertical-align:middle;box-sizing:border-box"><img src="${esc(dataUrl)}" alt="${safeName}" title="${safeName}" style="width:100%;height:100%;object-fit:contain;display:block;max-width:100%"></span>`;replaceSelectionWithHtml(editor,html);rememberRichEditorSelection();showToast('图片已插入；可拖动右下角手柄调整尺寸，点击图片放大。');};preview.src=dataUrl;
- }else{replaceSelectionWithHtml(editor,richAttachmentHtml(dataUrl,file));rememberRichEditorSelection();showToast('附件已插入；查看正文时点击附件即可下载。');}};reader.readAsDataURL(file);}
+function insertRichMediaFile(input,file){
+ const wrap=input.closest('.rich-editor-shell');const editor=wrap?.querySelector('[data-rich-editor]');if(!editor||!file)return;
+ const kind=input.dataset.richFileInput;input.value='';
+ const detectedMime=String(file.type||'').toLowerCase().split(';')[0].trim();
+ const mime=kind==='image'?detectedMime:richAttachmentMime(file);
+ const rasterMimes=new Set(['image/png','image/jpeg','image/gif','image/webp','image/avif','image/bmp']);
+ const attachmentMimes=new Set(['application/pdf','text/plain','text/csv','text/markdown','application/json','application/zip','application/x-zip-compressed','application/x-zip','multipart/x-zip','application/gzip','application/octet-stream','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.presentationml.presentation','application/msword','application/vnd.ms-excel','application/vnd.ms-powerpoint',...rasterMimes]);
+ if(kind==='image'&&!rasterMimes.has(mime)){showToast('请选择 PNG、JPEG、GIF、WebP、AVIF 或 BMP 图片；SVG 等主动内容不作为图片内嵌。');return;}
+ if(kind!=='image'&&!attachmentMimes.has(mime)){showToast('该文件类型不支持内嵌。支持 PDF、文本/CSV/Markdown、JSON、ZIP、Office 文档和常见位图；HTML、SVG 与脚本文件请勿作为附件插入。');return;}
+ const insertReference=(mediaRef,previewUrl,releasePreview)=>{
+  if(kind!=='image'){replaceSelectionWithHtml(editor,richAttachmentHtml(mediaRef,file));rememberRichEditorSelection();showToast('附件已上传并插入 Supabase Storage；数据库仅保存对象引用。');return;}
+  const preview=new Image();
+  preview.onerror=()=>{if(releasePreview)URL.revokeObjectURL(previewUrl);replaceSelectionWithHtml(editor,richAttachmentHtml(mediaRef,file));rememberRichEditorSelection();showToast('当前浏览器无法直接预览该图片格式，已将 Storage 文件作为附件插入，可下载后用本地应用打开。');};
+  preview.onload=()=>{const naturalW=preview.naturalWidth||480,naturalH=preview.naturalHeight||320;const width=Math.max(100,Math.min(640,naturalW));const height=Math.max(70,Math.round(width*naturalH/naturalW));const safeName=esc(file.name||'插入图片');const html=`<span class="rich-image-frame" contenteditable="false" style="display:inline-block;width:${width}px;height:${height}px;max-width:100%;resize:both;overflow:hidden;vertical-align:middle;box-sizing:border-box"><img src="${esc(mediaRef)}" alt="${safeName}" title="${safeName}" style="width:100%;height:100%;object-fit:contain;display:block;max-width:100%"></span>`;replaceSelectionWithHtml(editor,html);rememberRichEditorSelection();if(releasePreview)URL.revokeObjectURL(previewUrl);showToast(mediaRef.startsWith('supabase-storage://')?'图片已上传 Supabase Storage 并插入；可拖动右下角手柄调整尺寸，点击图片放大。':'图片已插入；可拖动右下角手柄调整尺寸，点击图片放大。');};
+  preview.src=previewUrl;
+ };
+ const syncApi=window.EmbeddedSync;const syncStatus=syncApi&&typeof syncApi.getStatus==='function'?syncApi.getStatus():null;
+ // When signed in, upload the binary directly to the private Storage bucket. Never
+ // fall back to a Base64 workspace write on a Storage failure.
+ if(syncStatus&&syncStatus.user&&syncApi&&typeof syncApi.uploadMediaFile==='function'){
+  input.disabled=true;
+  syncApi.uploadMediaFile(file,mime).then(storageRef=>{
+   if(kind==='image'){const previewUrl=URL.createObjectURL(file);insertReference(storageRef,previewUrl,true);}
+   else insertReference(storageRef,'',false);
+  }).catch(error=>showToast('Supabase Storage 上传失败，附件未插入：'+String(error&&error.message||error||'请检查 Storage Bucket 与 RLS 策略。'))).finally(()=>{input.disabled=false;});
+  return;
+ }
+ // Offline/local-first mode remains available. These legacy Data URLs are migrated
+ // to Storage before any workspace state is written to Supabase.
+ const reader=new FileReader();reader.onerror=()=>showToast('读取文件失败，请重试。');reader.onload=()=>{const rawDataUrl=String(reader.result||'');if(!rawDataUrl.startsWith('data:')){showToast('文件格式读取失败。');return;}const dataUrl=kind==='image'?rawDataUrl:normalizeRichDataUrlMime(rawDataUrl,mime);if(kind==='image')insertReference(dataUrl,dataUrl,false);else{replaceSelectionWithHtml(editor,richAttachmentHtml(dataUrl,file));rememberRichEditorSelection();showToast('附件已插入本机工作区；登录云同步后会自动迁移到 Supabase Storage。');}};reader.readAsDataURL(file);
+}
 function renderRichNoteEditor(content='',config={}){
  const html=knowledgeEditorHtml(content);
  const label=config.label||'正文内容';
@@ -3421,6 +3454,57 @@ function rememberRichEditorSelection(){const sel=window.getSelection();if(!sel||
 function restoreRichEditorSelection(editor){editor.focus();const sel=window.getSelection();const saved=editor._richSavedRange||richEditorSavedRange;if(saved&&saved.commonAncestorContainer&&editor.contains(saved.commonAncestorContainer)){try{sel.removeAllRanges();sel.addRange(saved);return true;}catch(_){}}return false;}
 function updateRichEditorHidden(editor){const form=editor&&editor.closest('form');const hidden=form&&(form.querySelector('textarea[name="content"]')||form.querySelector('textarea[name="lessonContent"]'));if(hidden)hidden.value=sanitizeKnowledgeHtml(editor.innerHTML);}
 function syncRichEditorSoon(editor){if(!editor)return;requestAnimationFrame(()=>syncRichEditorToolbar(editor));}
+function resolveRichStorageReferences(rootNode=document){
+ const api=window.EmbeddedSync;if(!api||typeof api.resolveMediaUrl!=='function'||!rootNode)return;
+ const selector='img[src^="supabase-storage://"],a.rich-attachment[href^="supabase-storage://"],img[data-storage-ref],a.rich-attachment[data-storage-ref]';
+ const nodes=[];if(rootNode.nodeType===1&&rootNode.matches&&rootNode.matches(selector))nodes.push(rootNode);
+ if(rootNode.querySelectorAll)nodes.push(...rootNode.querySelectorAll(selector));
+ for(const node of nodes){
+  const isAttachment=node.tagName==='A';const attr=isAttachment?'href':'src';
+  const reference=node.getAttribute('data-storage-ref')||node.getAttribute(attr)||'';
+  if(!reference.startsWith('supabase-storage://')||node.getAttribute('data-storage-resolved')===reference)continue;
+  api.resolveMediaUrl(reference,isAttachment,isAttachment?(node.getAttribute('download')||'download'):undefined).then(url=>{
+   if(!url||!node.isConnected||((node.getAttribute('data-storage-ref')||node.getAttribute(attr))!==reference))return;
+   node.setAttribute('data-storage-ref',reference);node.setAttribute(attr,url);node.setAttribute('data-storage-resolved',reference);
+  }).catch(error=>console.warn('[EmbeddedLearningHub] Storage media could not be resolved.',error));
+ }
+}
+function clearResolvedRichStorageReferences(){
+ const lightbox=document.getElementById('rich-media-lightbox');if(lightbox)lightbox.remove();
+ document.querySelectorAll('img[data-storage-ref],a.rich-attachment[data-storage-ref]').forEach(node=>{
+  const reference=node.getAttribute('data-storage-ref');if(!reference||!reference.startsWith('supabase-storage://'))return;
+  node.setAttribute(node.tagName==='A'?'href':'src',reference);node.removeAttribute('data-storage-resolved');
+ });
+}
+if(typeof MutationObserver!=='undefined'){
+ const richStorageObserver=new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node.nodeType===1)resolveRichStorageReferences(node);});
+ richStorageObserver.observe(document.body||document.documentElement,{childList:true,subtree:true});
+}
+// Private signed URLs expire. Refresh attachment links at the moment of download,
+// and retry a failed signed image URL once without persisting the temporary URL.
+document.addEventListener('click',function(e){
+ const link=e.target.closest('a.rich-attachment[data-storage-ref]');if(!link)return;
+ const reference=link.getAttribute('data-storage-ref')||'';const api=window.EmbeddedSync;
+ if(!reference.startsWith('supabase-storage://')||!api||typeof api.resolveMediaUrl!=='function')return;
+ e.preventDefault();
+ const popup=window.open('about:blank','_blank');if(popup)popup.opener=null;
+ api.resolveMediaUrl(reference,true,link.getAttribute('download')||'download',true).then(url=>{
+  if(popup&&!popup.closed)popup.location.href=url;else window.location.assign(url);
+ }).catch(error=>{
+  if(popup&&!popup.closed)popup.close();
+  showToast('附件下载链接刷新失败：'+String(error&&error.message||error||'请检查网络与登录状态。'));
+ });
+},true);
+document.addEventListener('error',function(e){
+ const image=e.target;if(!image||image.tagName!=='IMG'||!image.hasAttribute('data-storage-ref'))return;
+ const reference=image.getAttribute('data-storage-ref')||'';const source=image.getAttribute('src')||'';const api=window.EmbeddedSync;
+ if(!reference.startsWith('supabase-storage://')||!/^https:\/\//i.test(source)||!source.includes('/storage/v1/object/sign/')||!api||typeof api.resolveMediaUrl!=='function')return;
+ if(image.getAttribute('data-storage-refresh-attempted')===reference)return;
+ image.setAttribute('data-storage-refresh-attempted',reference);
+ api.resolveMediaUrl(reference,false,undefined,true).then(url=>{
+  if(image.isConnected&&(image.getAttribute('data-storage-ref')||'')===reference){image.setAttribute('src',url);image.addEventListener('load',()=>image.removeAttribute('data-storage-refresh-attempted'),{once:true});}
+ }).catch(error=>console.warn('[EmbeddedLearningHub] Expired image URL could not be refreshed.',error));
+},true);
 document.addEventListener('selectionchange',rememberRichEditorSelection);
 document.addEventListener('focusin',e=>{const editor=richEditorFromNode(e.target);if(editor)syncRichEditorSoon(editor);});
 document.addEventListener('input',e=>{const editor=richEditorFromNode(e.target);if(editor){updateRichEditorHidden(editor);syncRichEditorSoon(editor);}});
@@ -3464,7 +3548,7 @@ window.EmbeddedLearningApp={
  isRecoveryMode:()=>workspaceRecovery.active,
  applyRemoteState:(incoming)=>{if(workspaceRecovery.active)throw new Error('本机工作区处于恢复保护模式，已拒绝云端覆盖。请先恢复本地数据。');if(!isPlainObject(incoming))throw new Error('云端数据结构不符合预期，已拒绝覆盖本机数据。');const normalized=normalizeWorkspaceState(incoming,true);const preservedUi={...ui};const scrollX=window.scrollX,scrollY=window.scrollY;const active=document.activeElement;const editing=Boolean(document.querySelector('#modal-root form')||(active&&(active.closest('form')||active.matches('input,textarea,select,[contenteditable="true"]')||active.closest('[data-rich-editor]'))));clearPendingDeleteUndo();localStorage.setItem(STORAGE_KEY,JSON.stringify(normalized));state=normalized;ui=preservedUi;if(!editing){renderApp();requestAnimationFrame(()=>window.scrollTo({left:scrollX,top:scrollY,behavior:'auto'}));}return true;},
  notify:showToast,
- onSyncStatusChanged:(syncStatus)=>{const line=document.querySelector('.cloud-sync-card .sync-status-panel strong');if(line)line.textContent=syncStatus.message||'同步状态已更新';const dot=document.querySelector('.cloud-sync-card .sync-status-dot');if(dot){dot.classList.toggle('is-online',syncStatus.mode==='linked');dot.classList.toggle('is-conflict',syncStatus.mode==='conflict');}const errorLine=document.querySelector('.cloud-sync-card .sync-status-panel .sync-error-text');if(errorLine&&syncStatus.error)errorLine.textContent=syncStatus.error;if(syncStatus.mode==='password-recovery'&&ui.page!=='settings'){ui.page='settings';renderApp();return;}const active=document.activeElement;const editing=active&&active.matches&&active.matches('input,textarea,select');if(ui.page==='settings'&&!editing)renderApp();}
+ onSyncStatusChanged:(syncStatus)=>{if(syncStatus&&syncStatus.user)resolveRichStorageReferences(document);else clearResolvedRichStorageReferences();const line=document.querySelector('.cloud-sync-card .sync-status-panel strong');if(line)line.textContent=syncStatus.message||'同步状态已更新';const dot=document.querySelector('.cloud-sync-card .sync-status-dot');if(dot){dot.classList.toggle('is-online',syncStatus.mode==='linked');dot.classList.toggle('is-conflict',syncStatus.mode==='conflict');}const errorLine=document.querySelector('.cloud-sync-card .sync-status-panel .sync-error-text');if(errorLine&&syncStatus.error)errorLine.textContent=syncStatus.error;if(syncStatus.mode==='password-recovery'&&ui.page!=='settings'){ui.page='settings';renderApp();return;}const active=document.activeElement;const editing=active&&active.matches&&active.matches('input,textarea,select');if(ui.page==='settings'&&!editing)renderApp();}
 };
 window.addEventListener('scroll',function(){
  if(Date.now()<suppressLastReadScrollUntil||ui.page!=='learning'||ui.learningView!=='lesson')return;
